@@ -189,16 +189,6 @@ fn read_one_instruction(r: &mut Reader) -> Result<Instruction, &'static str> {
     })
 }
 
-/// Deserialize a single instruction from the wire format.
-pub fn deserialize_instruction(data: &[u8]) -> Result<Instruction, &'static str> {
-    let mut r = Reader::new(data);
-    let ix = read_one_instruction(&mut r)?;
-    if r.remaining() > 0 {
-        return Err("trailing data after instruction");
-    }
-    Ok(ix)
-}
-
 /// Deserialize a count-prefixed list of instructions from the wire format.
 pub fn deserialize_instructions(data: &[u8]) -> Result<Vec<Instruction>, &'static str> {
     let mut r = Reader::new(data);

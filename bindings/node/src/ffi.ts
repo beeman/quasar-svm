@@ -40,7 +40,7 @@ export const quasar_svm_new = lib.func("void *quasar_svm_new()");
 export const quasar_svm_free = lib.func("void quasar_svm_free(void *svm)");
 
 export const quasar_svm_add_program = lib.func(
-  "int32_t quasar_svm_add_program(void *svm, const void *program_id, const void *elf_data, uint64_t elf_len)"
+  "int32_t quasar_svm_add_program(void *svm, const void *program_id, const void *elf_data, uint64_t elf_len, uint8_t loader_version)"
 );
 
 export const quasar_svm_set_clock = lib.func(
@@ -63,12 +63,8 @@ export const quasar_svm_set_compute_budget = lib.func(
   "int32_t quasar_svm_set_compute_budget(void *svm, uint64_t max_units)"
 );
 
-export const quasar_svm_process_instruction = lib.func(
-  "int32_t quasar_svm_process_instruction(void *svm, const void *instruction, uint64_t instruction_len, const void *accounts, uint64_t accounts_len, _Out_ void **result_out, _Out_ uint64_t *result_len_out)"
-);
-
-export const quasar_svm_process_instruction_chain = lib.func(
-  "int32_t quasar_svm_process_instruction_chain(void *svm, const void *instructions, uint64_t instructions_len, const void *accounts, uint64_t accounts_len, _Out_ void **result_out, _Out_ uint64_t *result_len_out)"
+export const quasar_svm_process_instructions = lib.func(
+  "int32_t quasar_svm_process_instructions(void *svm, const void *instructions, uint64_t instructions_len, const void *accounts, uint64_t accounts_len, _Out_ void **result_out, _Out_ uint64_t *result_len_out)"
 );
 
 export const quasar_svm_process_transaction = lib.func(

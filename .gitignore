@@ -12,3 +12,4 @@ npm/*/quasar_svm.*
 libquasar_svm*
 quasar_svm.dll
 .npmrc
+package-lock.json

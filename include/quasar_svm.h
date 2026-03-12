@@ -30,7 +30,8 @@ void quasar_svm_free(struct QuasarSvm *svm);
 int32_t quasar_svm_add_program(struct QuasarSvm *svm,
                                const uint8_t (*program_id)[32],
                                const uint8_t *elf_data,
-                               uint64_t elf_len);
+                               uint64_t elf_len,
+                               uint8_t loader_version);
 
 int32_t quasar_svm_set_clock(struct QuasarSvm *svm,
                              uint64_t slot,
@@ -56,34 +57,18 @@ int32_t quasar_svm_set_epoch_schedule(struct QuasarSvm *svm,
 int32_t quasar_svm_set_compute_budget(struct QuasarSvm *svm, uint64_t max_units);
 
 /**
- * Execute a single instruction.
- *
- * `instruction` / `instruction_len`: serialized instruction (wire format).
- * `accounts` / `accounts_len`: serialized accounts (wire format).
- * On success, `*result_out` and `*result_len_out` are set to the serialized
- * result buffer. Free with `quasar_result_free(ptr, len)`.
- */
-int32_t quasar_svm_process_instruction(struct QuasarSvm *svm,
-                                       const uint8_t *instruction,
-                                       uint64_t instruction_len,
-                                       const uint8_t *accounts,
-                                       uint64_t accounts_len,
-                                       uint8_t **result_out,
-                                       uint64_t *result_len_out);
-
-/**
- * Execute a chain of instructions with shared, persisted account state.
+ * Execute one or more instructions with shared, persisted account state.
  *
  * `instructions` / `instructions_len`: count-prefixed serialized instructions.
  * `accounts` / `accounts_len`: serialized accounts (wire format).
  */
-int32_t quasar_svm_process_instruction_chain(struct QuasarSvm *svm,
-                                             const uint8_t *instructions,
-                                             uint64_t instructions_len,
-                                             const uint8_t *accounts,
-                                             uint64_t accounts_len,
-                                             uint8_t **result_out,
-                                             uint64_t *result_len_out);
+int32_t quasar_svm_process_instructions(struct QuasarSvm *svm,
+                                        const uint8_t *instructions,
+                                        uint64_t instructions_len,
+                                        const uint8_t *accounts,
+                                        uint64_t accounts_len,
+                                        uint8_t **result_out,
+                                        uint64_t *result_len_out);
 
 /**
  * Execute multiple instructions as a single atomic transaction.

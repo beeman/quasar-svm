@@ -25,6 +25,7 @@ pub mod loader_keys {
 
 struct CacheEntry {
     loader_key: Pubkey,
+    elf: Option<Arc<[u8]>>,
 }
 
 pub struct ProgramCache {
@@ -82,7 +83,7 @@ impl ProgramCache {
         };
         for builtin in BUILTINS {
             let entry = builtin.program_cache_entry();
-            me.replenish(builtin.program_id, entry);
+            me.replenish(builtin.program_id, entry, None);
         }
         me
     }
@@ -91,16 +92,17 @@ impl ProgramCache {
         self.cache.borrow_mut()
     }
 
-    fn replenish(&self, program_id: Pubkey, entry: Arc<ProgramCacheEntry>) {
+    fn replenish(&self, program_id: Pubkey, entry: Arc<ProgramCacheEntry>, elf: Option<Arc<[u8]>>) {
         let loader_key = entry.account_owner();
         self.entries.borrow_mut().insert(
             program_id,
-            CacheEntry { loader_key },
+            CacheEntry { loader_key, elf },
         );
         self.cache.borrow_mut().replenish(program_id, entry);
     }
 
     pub fn add_program(&self, program_id: &Pubkey, loader_key: &Pubkey, elf: &[u8]) {
+        let elf_arc: Arc<[u8]> = Arc::from(elf);
         let environment = {
             let config = self.runtime_environment.get_config().clone();
             let mut loader = BuiltinProgram::new_loader(config);
@@ -124,6 +126,7 @@ impl ProgramCache {
                 )
                 .unwrap(),
             ),
+            Some(elf_arc),
         );
     }
 
@@ -131,52 +134,89 @@ impl ProgramCache {
         self.cache.borrow().find(program_id)
     }
 
-    /// Create a fallback account for a program that's in the cache.
-    pub fn maybe_create_program_account(&self, pubkey: &Pubkey) -> Option<Account> {
-        self.entries.borrow().get(pubkey).map(|entry| {
-            match entry.loader_key {
-                loader_keys::NATIVE_LOADER => {
-                    let data = b"builtin".to_vec();
-                    let lamports = Rent::default().minimum_balance(data.len());
+    /// Create fallback accounts for a program that's in the cache.
+    /// For LOADER_V3 programs, returns both the program account and its programdata account.
+    pub fn maybe_create_program_accounts(&self, pubkey: &Pubkey) -> Vec<(Pubkey, Account)> {
+        let entries = self.entries.borrow();
+        let Some(entry) = entries.get(pubkey) else {
+            return vec![];
+        };
+        match entry.loader_key {
+            loader_keys::NATIVE_LOADER => {
+                let data = b"builtin".to_vec();
+                let lamports = Rent::default().minimum_balance(data.len());
+                vec![(
+                    *pubkey,
                     Account {
                         lamports,
                         data,
                         owner: loader_keys::NATIVE_LOADER,
                         executable: true,
                         ..Default::default()
-                    }
-                }
-                loader_keys::LOADER_V2 => Account {
+                    },
+                )]
+            }
+            loader_keys::LOADER_V2 => vec![(
+                *pubkey,
+                Account {
                     lamports: Rent::default().minimum_balance(0),
                     data: vec![],
                     owner: loader_keys::LOADER_V2,
                     executable: true,
                     ..Default::default()
                 },
-                loader_keys::LOADER_V3 => {
-                    let programdata_address = Pubkey::find_program_address(
-                        &[pubkey.as_ref()],
-                        &loader_keys::LOADER_V3,
-                    )
-                    .0;
-                    let data = bincode::serialize(&UpgradeableLoaderState::Program {
-                        programdata_address,
-                    })
-                    .unwrap();
-                    let lamports = Rent::default().minimum_balance(data.len());
-                    Account {
-                        lamports,
-                        data,
-                        owner: loader_keys::LOADER_V3,
-                        executable: true,
-                        ..Default::default()
-                    }
+            )],
+            loader_keys::LOADER_V3 => {
+                let (programdata_address, _) = Pubkey::find_program_address(
+                    &[pubkey.as_ref()],
+                    &loader_keys::LOADER_V3,
+                );
+
+                // Program account
+                let program_data = bincode::serialize(&UpgradeableLoaderState::Program {
+                    programdata_address,
+                })
+                .unwrap();
+                let program_account = Account {
+                    lamports: Rent::default().minimum_balance(program_data.len()),
+                    data: program_data,
+                    owner: loader_keys::LOADER_V3,
+                    executable: true,
+                    ..Default::default()
+                };
+
+                // Programdata account
+                let programdata_header = bincode::serialize(
+                    &UpgradeableLoaderState::ProgramData {
+                        slot: 0,
+                        upgrade_authority_address: None,
+                    },
+                )
+                .unwrap();
+                let mut programdata_bytes = programdata_header;
+                if let Some(elf) = &entry.elf {
+                    programdata_bytes.extend_from_slice(elf);
                 }
-                _ => Account {
+                let programdata_account = Account {
+                    lamports: Rent::default().minimum_balance(programdata_bytes.len()),
+                    data: programdata_bytes,
+                    owner: loader_keys::LOADER_V3,
+                    executable: false,
+                    ..Default::default()
+                };
+
+                vec![
+                    (*pubkey, program_account),
+                    (programdata_address, programdata_account),
+                ]
+            }
+            _ => vec![(
+                *pubkey,
+                Account {
                     executable: true,
                     ..Default::default()
                 },
-            }
-        })
+            )],
+        }
     }
 }

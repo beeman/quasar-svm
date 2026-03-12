@@ -1,16 +1,25 @@
-import type { TransactionInstruction, PublicKey, KeyedAccountInfo } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
+import type { TransactionInstruction, KeyedAccountInfo } from "@solana/web3.js";
 import * as ffi from "../ffi.js";
 import {
-  serializeInstruction,
   serializeInstructions,
   serializeAccounts,
   deserializeResult,
 } from "./wire.js";
 import type { ExecutionResult } from "../index.js";
 import type { Clock, EpochSchedule } from "../index.js";
+import {
+  SPL_TOKEN_PROGRAM_ID,
+  SPL_TOKEN_2022_PROGRAM_ID,
+  SPL_ASSOCIATED_TOKEN_PROGRAM_ID,
+  LOADER_V2,
+  LOADER_V3,
+  loadElf,
+} from "../programs.js";
 
 export type { Web3ExecutionResult } from "./types.js";
 export type { ExecutionResult, Clock, EpochSchedule } from "../index.js";
+export { SPL_TOKEN_PROGRAM_ID, SPL_TOKEN_2022_PROGRAM_ID, SPL_ASSOCIATED_TOKEN_PROGRAM_ID, LOADER_V2, LOADER_V3 } from "../programs.js";
 
 export class QuasarSvm {
   private ptr: unknown;
@@ -32,15 +41,33 @@ export class QuasarSvm {
     }
   }
 
-  addProgram(programId: PublicKey, elf: Uint8Array): void {
+  addProgram(programId: PublicKey, elf: Uint8Array, loaderVersion = LOADER_V3): this {
     this.check(
       ffi.quasar_svm_add_program(
         this.ptr,
         programId.toBuffer(),
         Buffer.from(elf),
-        elf.length
+        elf.length,
+        loaderVersion
       )
     );
+    return this;
+  }
+
+  addTokenProgram(): this {
+    return this.addProgram(new PublicKey(SPL_TOKEN_PROGRAM_ID), loadElf("spl_token.so"), LOADER_V2);
+  }
+
+  addToken2022Program(): this {
+    return this.addProgram(new PublicKey(SPL_TOKEN_2022_PROGRAM_ID), loadElf("spl_token_2022.so"), LOADER_V3);
+  }
+
+  addAssociatedTokenProgram(): this {
+    return this.addProgram(new PublicKey(SPL_ASSOCIATED_TOKEN_PROGRAM_ID), loadElf("spl_associated_token.so"), LOADER_V2);
+  }
+
+  addSystemProgram(): this {
+    return this;
   }
 
   setClock(opts: Clock): void {
@@ -89,23 +116,13 @@ export class QuasarSvm {
   }
 
   processInstruction(
-    instruction: TransactionInstruction,
+    instructions: TransactionInstruction | TransactionInstruction[],
     accounts: KeyedAccountInfo[]
   ): ExecutionResult<KeyedAccountInfo> {
+    const ixs = Array.isArray(instructions) ? instructions : [instructions];
     return this.exec(
-      ffi.quasar_svm_process_instruction,
-      serializeInstruction(instruction),
-      serializeAccounts(accounts)
-    );
-  }
-
-  processInstructionChain(
-    instructions: TransactionInstruction[],
-    accounts: KeyedAccountInfo[]
-  ): ExecutionResult<KeyedAccountInfo> {
-    return this.exec(
-      ffi.quasar_svm_process_instruction_chain,
-      serializeInstructions(instructions),
+      ffi.quasar_svm_process_instructions,
+      serializeInstructions(ixs),
       serializeAccounts(accounts)
     );
   }

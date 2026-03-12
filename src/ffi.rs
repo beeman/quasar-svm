@@ -51,6 +51,7 @@ pub extern "C" fn quasar_svm_add_program(
     program_id: *const [u8; 32],
     elf_data: *const u8,
     elf_len: u64,
+    loader_version: u8,
 ) -> i32 {
     clear_last_error();
     if svm.is_null() || program_id.is_null() || elf_data.is_null() {
@@ -61,7 +62,11 @@ pub extern "C" fn quasar_svm_add_program(
         let svm = unsafe { &*svm };
         let id = solana_pubkey::Pubkey::new_from_array(unsafe { *program_id });
         let elf = unsafe { slice::from_raw_parts(elf_data, elf_len as usize) };
-        svm.add_program(&id, &loader_keys::LOADER_V3, elf);
+        let loader_key = match loader_version {
+            2 => &loader_keys::LOADER_V2,
+            _ => &loader_keys::LOADER_V3,
+        };
+        svm.add_program(&id, loader_key, elf);
         QUASAR_OK
     })) {
         Ok(code) => code,
@@ -176,71 +181,12 @@ pub extern "C" fn quasar_svm_set_compute_budget(svm: *mut QuasarSvm, max_units: 
 // Execution — serialized bytes in, serialized bytes out
 // ---------------------------------------------------------------------------
 
-/// Execute a single instruction.
-///
-/// `instruction` / `instruction_len`: serialized instruction (wire format).
-/// `accounts` / `accounts_len`: serialized accounts (wire format).
-/// On success, `*result_out` and `*result_len_out` are set to the serialized
-/// result buffer. Free with `quasar_result_free(ptr, len)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn quasar_svm_process_instruction(
-    svm: *mut QuasarSvm,
-    instruction: *const u8,
-    instruction_len: u64,
-    accounts: *const u8,
-    accounts_len: u64,
-    result_out: *mut *mut u8,
-    result_len_out: *mut u64,
-) -> i32 {
-    clear_last_error();
-    if svm.is_null()
-        || instruction.is_null()
-        || accounts.is_null()
-        || result_out.is_null()
-        || result_len_out.is_null()
-    {
-        set_last_error("Null pointer argument");
-        return QUASAR_ERR_NULL_POINTER;
-    }
-    match std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let svm = unsafe { &mut *svm };
-        let ix_bytes = unsafe { slice::from_raw_parts(instruction, instruction_len as usize) };
-        let acct_bytes = unsafe { slice::from_raw_parts(accounts, accounts_len as usize) };
-
-        let ix = match wire::deserialize_instruction(ix_bytes) {
-            Ok(ix) => ix,
-            Err(e) => {
-                set_last_error(format!("Invalid instruction data: {e}"));
-                return QUASAR_ERR_EXECUTION;
-            }
-        };
-        let accts = match wire::deserialize_accounts(acct_bytes) {
-            Ok(a) => a,
-            Err(e) => {
-                set_last_error(format!("Invalid accounts data: {e}"));
-                return QUASAR_ERR_EXECUTION;
-            }
-        };
-
-        let exec_result = svm.process_instruction(&ix, &accts);
-        let logs = svm.drain_logs();
-        write_result_out(result_out, result_len_out, &exec_result, logs);
-        QUASAR_OK
-    })) {
-        Ok(code) => code,
-        Err(_) => {
-            set_last_error("Panic during instruction execution");
-            QUASAR_ERR_INTERNAL
-        }
-    }
-}
-
-/// Execute a chain of instructions with shared, persisted account state.
+/// Execute one or more instructions with shared, persisted account state.
 ///
 /// `instructions` / `instructions_len`: count-prefixed serialized instructions.
 /// `accounts` / `accounts_len`: serialized accounts (wire format).
 #[unsafe(no_mangle)]
-pub extern "C" fn quasar_svm_process_instruction_chain(
+pub extern "C" fn quasar_svm_process_instructions(
     svm: *mut QuasarSvm,
     instructions: *const u8,
     instructions_len: u64,
@@ -279,14 +225,14 @@ pub extern "C" fn quasar_svm_process_instruction_chain(
             }
         };
 
-        let exec_result = svm.process_instruction_chain(&ixs, &accts);
+        let exec_result = svm.process_instructions(&ixs, &accts);
         let logs = svm.drain_logs();
         write_result_out(result_out, result_len_out, &exec_result, logs);
         QUASAR_OK
     })) {
         Ok(code) => code,
         Err(_) => {
-            set_last_error("Panic during instruction chain execution");
+            set_last_error("Panic during instruction execution");
             QUASAR_ERR_INTERNAL
         }
     }

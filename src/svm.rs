@@ -22,20 +22,9 @@ use solana_svm_timings::ExecuteTimings;
 use solana_svm_transaction::instruction::SVMInstruction;
 use solana_transaction_context::{IndexOfAccount, TransactionContext};
 
-use crate::program_cache::{loader_keys, ProgramCache};
+use crate::program_cache::ProgramCache;
 use crate::sysvars::Sysvars;
 
-// Embedded SPL program ELFs
-const SPL_TOKEN_ELF: &[u8] = include_bytes!("elf/token.so");
-const SPL_TOKEN_2022_ELF: &[u8] = include_bytes!("elf/token_2022.so");
-const SPL_ASSOCIATED_TOKEN_ELF: &[u8] = include_bytes!("elf/associated_token.so");
-
-const SPL_TOKEN_ID: Pubkey =
-    solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-const SPL_TOKEN_2022_ID: Pubkey =
-    solana_pubkey::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
-const SPL_ASSOCIATED_TOKEN_ID: Pubkey =
-    solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 
 struct NoOpCallback;
 
@@ -81,26 +70,13 @@ impl QuasarSvm {
         let compute_budget = ComputeBudget::new_with_defaults(true, true);
         let program_cache = ProgramCache::new(&feature_set, &compute_budget);
 
-        let svm = Self {
+        Self {
             compute_budget,
             feature_set,
             logger: Some(LogCollector::new_ref()),
             program_cache,
             sysvars: Sysvars::default(),
-        };
-
-        // Load embedded SPL programs
-        svm.program_cache
-            .add_program(&SPL_TOKEN_ID, &loader_keys::LOADER_V2, SPL_TOKEN_ELF);
-        svm.program_cache
-            .add_program(&SPL_TOKEN_2022_ID, &loader_keys::LOADER_V3, SPL_TOKEN_2022_ELF);
-        svm.program_cache.add_program(
-            &SPL_ASSOCIATED_TOKEN_ID,
-            &loader_keys::LOADER_V2,
-            SPL_ASSOCIATED_TOKEN_ELF,
-        );
-
-        svm
+        }
     }
 
     pub fn add_program(&self, program_id: &Pubkey, loader_key: &Pubkey, elf: &[u8]) {
@@ -170,12 +146,15 @@ impl QuasarSvm {
 
         for pid in &program_ids {
             if !account_keys.contains(pid) {
-                if let Some(acct) = self.program_cache.maybe_create_program_account(pid) {
-                    fallbacks.insert(*pid, acct);
-                } else {
+                let program_accounts = self.program_cache.maybe_create_program_accounts(pid);
+                if program_accounts.is_empty() {
                     let mut stub = Account::default();
                     stub.set_executable(true);
                     fallbacks.insert(*pid, stub);
+                } else {
+                    for (key, acct) in program_accounts {
+                        fallbacks.insert(key, acct);
+                    }
                 }
             }
         }
@@ -194,12 +173,17 @@ impl QuasarSvm {
                 if let Some((_, a)) = accounts.iter().find(|(k, _)| k == key) {
                     return (*key, AccountSharedData::from(a.clone()));
                 }
-                // Then try fallbacks.
+                // Then try fallbacks (already built for top-level program IDs).
                 if let Some(a) = fallbacks.get(key) {
                     return (*key, AccountSharedData::from(a.clone()));
                 }
                 // Sysvar fallback.
                 if let Some(a) = self.sysvars.maybe_create_sysvar_account(key) {
+                    return (*key, AccountSharedData::from(a));
+                }
+                // Program account fallback (for CPI targets not in top-level instructions).
+                let program_accounts = self.program_cache.maybe_create_program_accounts(key);
+                if let Some((_, a)) = program_accounts.into_iter().find(|(k, _)| k == key) {
                     return (*key, AccountSharedData::from(a));
                 }
                 // Empty account as last resort.
@@ -322,47 +306,9 @@ impl QuasarSvm {
         )
     }
 
-    /// Execute a single instruction.
-    pub fn process_instruction(
-        &mut self,
-        instruction: &Instruction,
-        accounts: &[(Pubkey, Account)],
-    ) -> ExecutionResult {
-        self.reset_logger();
-
-        let (sanitized_message, transaction_accounts) =
-            self.compile_accounts(std::slice::from_ref(instruction), accounts);
-
-        let mut transaction_context = TransactionContext::new(
-            transaction_accounts,
-            self.sysvars.rent.clone(),
-            self.compute_budget.max_instruction_stack_depth,
-            self.compute_budget.max_instruction_trace_length,
-        );
-
-        let sysvar_cache = self.sysvars.setup_sysvar_cache(accounts);
-
-        let (compute_units_consumed, execution_time_us, raw_result, return_data) =
-            self.process_message(&sanitized_message, &mut transaction_context, &sysvar_cache);
-
-        let resulting_accounts = if raw_result.is_ok() {
-            Self::deconstruct_resulting_accounts(&transaction_context, accounts)
-        } else {
-            accounts.to_vec()
-        };
-
-        ExecutionResult {
-            compute_units_consumed,
-            execution_time_us,
-            raw_result,
-            return_data,
-            resulting_accounts,
-        }
-    }
-
-    /// Execute a chain of instructions with shared accounts.
+    /// Execute one or more instructions with shared accounts.
     /// Account state persists between instructions. Non-atomic.
-    pub fn process_instruction_chain(
+    pub fn process_instructions(
         &mut self,
         instructions: &[Instruction],
         accounts: &[(Pubkey, Account)],
