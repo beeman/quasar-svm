@@ -8,10 +8,10 @@ use solana_hash::Hash;
 use solana_program_runtime::sysvar_cache::SysvarCache;
 use solana_pubkey::Pubkey;
 use solana_rent::Rent;
-use solana_slot_hashes::{MAX_ENTRIES as SLOT_HASHES_MAX_ENTRIES, SlotHashes};
+use solana_slot_hashes::{SlotHashes, MAX_ENTRIES as SLOT_HASHES_MAX_ENTRIES};
 use solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry};
 use solana_sysvar::{
-    SysvarSerialize, last_restart_slot::LastRestartSlot, recent_blockhashes::RecentBlockhashes,
+    last_restart_slot::LastRestartSlot, recent_blockhashes::RecentBlockhashes, SysvarSerialize,
 };
 use solana_sysvar_id::SysvarId;
 

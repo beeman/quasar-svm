@@ -1,4 +1,3 @@
-mod check;
 mod error;
 mod program_cache;
 mod svm;
@@ -15,7 +14,6 @@ pub use solana_sdk_ids;
 /// Convenience alias so users can write `quasar_svm::system_program::ID`.
 pub use solana_sdk_ids::system_program;
 
-pub use crate::check::{AccountCheck, AccountCheckBuilder, Check};
 pub use crate::error::ProgramError;
 pub use crate::program_cache::loader_keys;
 pub use crate::svm::{ExecutionResult, QuasarSvm};
@@ -84,128 +82,48 @@ impl QuasarSvm {
         self.sysvars.warp_to_slot(slot);
         self
     }
-
-    /// Execute a transaction and validate the result against a set of checks.
-    /// Panics with detailed output if any check fails.
-    pub fn process_and_validate_transaction(
-        &mut self,
-        instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
-        checks: &[Check],
-    ) -> ExecutionResult {
-        let result = self.process_transaction(instructions, accounts);
-        validate_result(&result, checks, &self.sysvars.rent);
-        result
-    }
-
-    /// Execute instructions (non-atomic) and validate the result.
-    /// Panics with detailed output if any check fails.
-    pub fn process_and_validate_instructions(
-        &mut self,
-        instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
-        checks: &[Check],
-    ) -> ExecutionResult {
-        let result = self.process_instructions(instructions, accounts);
-        validate_result(&result, checks, &self.sysvars.rent);
-        result
-    }
-}
-
-fn validate_result(result: &ExecutionResult, checks: &[Check], rent: &Rent) {
-    let failures = check::run_checks(result, checks, rent);
-    if !failures.is_empty() {
-        let mut msg = String::from("Validation failed:\n");
-        for f in &failures {
-            msg.push_str(&format!("  - {f}\n"));
-        }
-        if !result.logs.is_empty() {
-            msg.push_str("\nProgram logs:\n");
-            for log in &result.logs {
-                msg.push_str(&format!("  {log}\n"));
-            }
-        }
-        msg.push_str(&format!(
-            "\nCompute units consumed: {}",
-            result.compute_units_consumed
-        ));
-        panic!("{msg}");
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Ergonomic helpers on ExecutionResult
+// ExecutionResult
 // ---------------------------------------------------------------------------
 
 impl ExecutionResult {
-    /// Returns `true` if all instructions succeeded.
+    /// `0` on success, or the error code from the failed instruction.
+    pub fn status(&self) -> i32 {
+        match &self.raw_result {
+            Ok(()) => 0,
+            Err(e) => instruction_error_to_code(e),
+        }
+    }
+
     pub fn is_ok(&self) -> bool {
         self.raw_result.is_ok()
     }
 
-    /// Returns `true` if any instruction failed.
     pub fn is_err(&self) -> bool {
         self.raw_result.is_err()
     }
 
-    /// The typed result: `Ok(())` on success, `Err(ProgramError)` on failure.
-    pub fn result(&self) -> Result<(), ProgramError> {
-        match &self.raw_result {
-            Ok(()) => Ok(()),
-            Err(e) => Err(ProgramError::from(e.clone())),
-        }
-    }
-
-    /// The error variant, if execution failed.
+    /// Convert the raw result into a typed `ProgramError`.
     pub fn error(&self) -> Option<ProgramError> {
-        self.result().err()
+        self.raw_result
+            .as_ref()
+            .err()
+            .map(|e| ProgramError::from(e.clone()))
     }
 
-    /// Unwrap the result, panicking with the error and program logs if
-    /// execution failed.
+    /// Panics with the error and program logs if execution failed.
     pub fn unwrap(&self) {
         if let Err(ref e) = self.raw_result {
-            let err = ProgramError::from(e.clone());
-            let logs = &self.logs;
-            if logs.is_empty() {
-                panic!("execution failed: {err}");
-            } else {
-                panic!(
-                    "execution failed: {err}\n\nProgram logs:\n{}",
-                    logs.iter()
-                        .map(|l| format!("  {l}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                );
-            }
+            panic!("{}", self.format_error(e));
         }
     }
 
-    /// Unwrap with a custom message, including program logs on failure.
+    /// Panics with a custom message, error, and program logs.
     pub fn expect(&self, msg: &str) {
         if let Err(ref e) = self.raw_result {
-            let err = ProgramError::from(e.clone());
-            let logs = &self.logs;
-            if logs.is_empty() {
-                panic!("{msg}: {err}");
-            } else {
-                panic!(
-                    "{msg}: {err}\n\nProgram logs:\n{}",
-                    logs.iter()
-                        .map(|l| format!("  {l}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                );
-            }
-        }
-    }
-
-    /// Assert that execution failed with a specific error.
-    pub fn assert_error(&self, expected: ProgramError) {
-        match self.error() {
-            Some(ref actual) if *actual == expected => {}
-            Some(actual) => panic!("expected error {expected:?}, got {actual:?}"),
-            None => panic!("expected error {expected:?}, but execution succeeded"),
+            panic!("{msg}: {}", self.format_error(e));
         }
     }
 
@@ -215,5 +133,42 @@ impl ExecutionResult {
             .iter()
             .find(|(k, _)| k == pubkey)
             .map(|(_, a)| a)
+    }
+
+    fn format_error(&self, e: &InstructionError) -> String {
+        let err = ProgramError::from(e.clone());
+        if self.logs.is_empty() {
+            format!("{err}")
+        } else {
+            format!(
+                "{err}\n\nProgram logs:\n{}",
+                self.logs
+                    .iter()
+                    .map(|l| format!("  {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        }
+    }
+}
+
+/// Map an `InstructionError` to a numeric status code.
+/// `Custom(n)` → `n as i32`, known variants → negative codes, unknown → `-1`.
+fn instruction_error_to_code(err: &InstructionError) -> i32 {
+    match err {
+        InstructionError::Custom(n) => *n as i32,
+        InstructionError::InvalidArgument => -2,
+        InstructionError::InvalidInstructionData => -3,
+        InstructionError::InvalidAccountData => -4,
+        InstructionError::AccountDataTooSmall => -5,
+        InstructionError::InsufficientFunds => -6,
+        InstructionError::IncorrectProgramId => -7,
+        InstructionError::MissingRequiredSignature => -8,
+        InstructionError::AccountAlreadyInitialized => -9,
+        InstructionError::UninitializedAccount => -10,
+        InstructionError::MissingAccount => -11,
+        InstructionError::ComputationalBudgetExceeded => -12,
+        InstructionError::ArithmeticOverflow => -13,
+        _ => -1,
     }
 }
