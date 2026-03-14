@@ -84,6 +84,87 @@ export function packTokenAccount(token: TokenAccountData): Buffer {
   return buf;
 }
 
+// ---------------------------------------------------------------------------
+// Unpack
+// ---------------------------------------------------------------------------
+
+export function unpackMint(data: Uint8Array): MintData | null {
+  if (data.length < MINT_LEN) return null;
+  const buf = Buffer.from(data);
+  let o = 0;
+  const [mintAuthority, o1] = unpackCOptionPubkey(buf, o); o = o1;
+  const supply = buf.readBigUInt64LE(o); o += 8;
+  const decimals = buf[o]; o += 1;
+  const isInitialized = buf[o] !== 0; o += 1;
+  if (!isInitialized) return null;
+  const [freezeAuthority, o2] = unpackCOptionPubkey(buf, o); o = o2;
+  return { mintAuthority: mintAuthority ?? undefined, supply, decimals, freezeAuthority: freezeAuthority ?? undefined };
+}
+
+export function unpackTokenAccount(data: Uint8Array): TokenAccountData | null {
+  if (data.length < TOKEN_ACCOUNT_LEN) return null;
+  const buf = Buffer.from(data);
+  let o = 0;
+  const mint = new Uint8Array(buf.subarray(o, o + 32)); o += 32;
+  const owner = new Uint8Array(buf.subarray(o, o + 32)); o += 32;
+  const amount = buf.readBigUInt64LE(o); o += 8;
+  const [delegate, o1] = unpackCOptionPubkey(buf, o); o = o1;
+  const stateVal = buf[o]; o += 1;
+  const state = stateVal as TokenAccountState;
+  const [isNativeRaw, o2] = unpackCOptionU64(buf, o); o = o2;
+  const delegatedAmount = buf.readBigUInt64LE(o); o += 8;
+  const [closeAuthority, o3] = unpackCOptionPubkey(buf, o); o = o3;
+  return {
+    mint, owner, amount,
+    delegate: delegate ?? undefined,
+    state,
+    isNative: isNativeRaw ?? undefined,
+    delegatedAmount,
+    closeAuthority: closeAuthority ?? undefined,
+  };
+}
+
+function unpackCOptionPubkey(buf: Buffer, offset: number): [Uint8Array | null, number] {
+  const tag = buf.readUInt32LE(offset);
+  const key = new Uint8Array(buf.subarray(offset + 4, offset + 36));
+  return [tag === 1 ? key : null, offset + 36];
+}
+
+function unpackCOptionU64(buf: Buffer, offset: number): [bigint | null, number] {
+  const tag = buf.readUInt32LE(offset);
+  const val = buf.readBigUInt64LE(offset + 4);
+  return [tag === 1 ? val : null, offset + 12];
+}
+
+// ---------------------------------------------------------------------------
+// Instruction builders
+// ---------------------------------------------------------------------------
+
+export function tokenTransferData(amount: bigint): Buffer {
+  const buf = Buffer.alloc(9);
+  buf[0] = 3; // Transfer
+  buf.writeBigUInt64LE(amount, 1);
+  return buf;
+}
+
+export function tokenMintToData(amount: bigint): Buffer {
+  const buf = Buffer.alloc(9);
+  buf[0] = 7; // MintTo
+  buf.writeBigUInt64LE(amount, 1);
+  return buf;
+}
+
+export function tokenBurnData(amount: bigint): Buffer {
+  const buf = Buffer.alloc(9);
+  buf[0] = 8; // Burn
+  buf.writeBigUInt64LE(amount, 1);
+  return buf;
+}
+
+// ---------------------------------------------------------------------------
+// Pack helpers
+// ---------------------------------------------------------------------------
+
 function packCOptionPubkey(
   buf: Buffer,
   offset: number,

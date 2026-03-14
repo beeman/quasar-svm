@@ -16,8 +16,14 @@ import {
   LOADER_V3,
   loadElf,
 } from "../programs.js";
-import { packMint, packTokenAccount, rentMinimumBalance, MINT_LEN, TOKEN_ACCOUNT_LEN } from "../token.js";
-import type { TokenAccountState } from "../token.js";
+import {
+  packMint, packTokenAccount, rentMinimumBalance,
+  unpackMint, unpackTokenAccount,
+  tokenTransferData, tokenMintToData, tokenBurnData,
+  MINT_LEN, TOKEN_ACCOUNT_LEN,
+} from "../token.js";
+import type { TokenAccountState, MintData, TokenAccountData } from "../token.js";
+import type { ProgramError, ExecutionStatus } from "../index.js";
 
 export type { Web3ExecutionResult } from "./types.js";
 export type { ExecutionResult, ExecutionStatus, ProgramError, Clock, EpochSchedule } from "../index.js";
@@ -356,4 +362,96 @@ export class QuasarSvm {
     ffi.quasar_result_free(resultPtr, resultLen);
     return deserializeResult(resultBuf);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Result helpers
+// ---------------------------------------------------------------------------
+
+/** Unpack a token account from execution result accounts. */
+export function tokenAccount(result: ExecutionResult<KeyedAccountInfo>, pubkey: PublicKey): TokenAccountData | null {
+  const acct = result.accounts.find(a => a.accountId.equals(pubkey));
+  if (!acct) return null;
+  return unpackTokenAccount(acct.accountInfo.data);
+}
+
+/** Unpack a mint from execution result accounts. */
+export function mintAccount(result: ExecutionResult<KeyedAccountInfo>, pubkey: PublicKey): MintData | null {
+  const acct = result.accounts.find(a => a.accountId.equals(pubkey));
+  if (!acct) return null;
+  return unpackMint(acct.accountInfo.data);
+}
+
+/** Assert the execution succeeded. Throws with logs on failure. */
+export function assertSuccess(result: ExecutionResult<KeyedAccountInfo>): void {
+  if (!result.status.ok) {
+    const err = (result.status as { ok: false; error: ProgramError }).error;
+    throw new Error(`expected success, got ${err.type}: ${JSON.stringify(err)}\n\nLogs:\n${result.logs.join("\n")}`);
+  }
+}
+
+/** Assert the execution failed with a specific error. */
+export function assertError(result: ExecutionResult<KeyedAccountInfo>, expected: ProgramError): void {
+  if (result.status.ok) {
+    throw new Error(`expected error ${JSON.stringify(expected)}, but execution succeeded`);
+  }
+  const actual = (result.status as { ok: false; error: ProgramError }).error;
+  if (actual.type !== expected.type) {
+    throw new Error(`expected error ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  if ("code" in expected && "code" in actual && actual.code !== expected.code) {
+    throw new Error(`expected error code ${expected.code}, got ${actual.code}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Token instruction builders
+// ---------------------------------------------------------------------------
+
+/** Build an SPL Token Transfer instruction. */
+export function tokenTransfer(
+  source: PublicKey, destination: PublicKey, authority: PublicKey,
+  amount: bigint, tokenProgramId = new PublicKey(SPL_TOKEN_PROGRAM_ID),
+): TransactionInstruction {
+  return {
+    programId: tokenProgramId,
+    keys: [
+      { pubkey: source, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: tokenTransferData(amount),
+  };
+}
+
+/** Build an SPL Token MintTo instruction. */
+export function tokenMintTo(
+  mint: PublicKey, destination: PublicKey, mintAuthority: PublicKey,
+  amount: bigint, tokenProgramId = new PublicKey(SPL_TOKEN_PROGRAM_ID),
+): TransactionInstruction {
+  return {
+    programId: tokenProgramId,
+    keys: [
+      { pubkey: mint, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: mintAuthority, isSigner: true, isWritable: false },
+    ],
+    data: tokenMintToData(amount),
+  };
+}
+
+/** Build an SPL Token Burn instruction. */
+export function tokenBurn(
+  source: PublicKey, mint: PublicKey, authority: PublicKey,
+  amount: bigint, tokenProgramId = new PublicKey(SPL_TOKEN_PROGRAM_ID),
+): TransactionInstruction {
+  return {
+    programId: tokenProgramId,
+    keys: [
+      { pubkey: source, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: tokenBurnData(amount),
+  };
 }

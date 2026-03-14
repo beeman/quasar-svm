@@ -22,8 +22,14 @@ import {
   LOADER_V3,
   loadElf,
 } from "../programs.js";
-import { packMint, packTokenAccount, rentMinimumBalance, MINT_LEN, TOKEN_ACCOUNT_LEN } from "../token.js";
-import type { TokenAccountState } from "../token.js";
+import {
+  packMint, packTokenAccount, rentMinimumBalance,
+  unpackMint, unpackTokenAccount,
+  tokenTransferData, tokenMintToData, tokenBurnData,
+  MINT_LEN, TOKEN_ACCOUNT_LEN,
+} from "../token.js";
+import type { TokenAccountState, MintData, TokenAccountData } from "../token.js";
+import type { ProgramError, ExecutionStatus } from "../index.js";
 
 export type { KitExecutionResult, SvmAccount } from "./types.js";
 export type { ExecutionResult, ExecutionStatus, ProgramError, Clock, EpochSchedule } from "../index.js";
@@ -382,4 +388,98 @@ export class QuasarSvm {
     ffi.quasar_result_free(resultPtr, resultLen);
     return deserializeResult(resultBuf);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Result helpers
+// ---------------------------------------------------------------------------
+
+/** Unpack a token account from execution result accounts. */
+export function tokenAccount(result: ExecutionResult<SvmAccount>, addr: Address): TokenAccountData | null {
+  const acct = result.accounts.find(a => a.address === addr);
+  if (!acct) return null;
+  return unpackTokenAccount(acct.data);
+}
+
+/** Unpack a mint from execution result accounts. */
+export function mintAccount(result: ExecutionResult<SvmAccount>, addr: Address): MintData | null {
+  const acct = result.accounts.find(a => a.address === addr);
+  if (!acct) return null;
+  return unpackMint(acct.data);
+}
+
+/** Assert the execution succeeded. Throws with logs on failure. */
+export function assertSuccess(result: ExecutionResult<SvmAccount>): void {
+  if (!result.status.ok) {
+    const err = (result.status as { ok: false; error: ProgramError }).error;
+    throw new Error(`expected success, got ${err.type}: ${JSON.stringify(err)}\n\nLogs:\n${result.logs.join("\n")}`);
+  }
+}
+
+/** Assert the execution failed with a specific error. */
+export function assertError(result: ExecutionResult<SvmAccount>, expected: ProgramError): void {
+  if (result.status.ok) {
+    throw new Error(`expected error ${JSON.stringify(expected)}, but execution succeeded`);
+  }
+  const actual = (result.status as { ok: false; error: ProgramError }).error;
+  if (actual.type !== expected.type) {
+    throw new Error(`expected error ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  if ("code" in expected && "code" in actual && actual.code !== expected.code) {
+    throw new Error(`expected error code ${expected.code}, got ${actual.code}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Token instruction builders
+// ---------------------------------------------------------------------------
+
+const enc = getAddressEncoder();
+
+/** Build an SPL Token Transfer instruction. */
+export function tokenTransfer(
+  source: Address, destination: Address, authority: Address,
+  amount: bigint, tokenProgramId: Address = address(SPL_TOKEN_PROGRAM_ID),
+): Instruction {
+  return {
+    programAddress: tokenProgramId,
+    accounts: [
+      { address: source, role: 1 /* writable */ },
+      { address: destination, role: 1 },
+      { address: authority, role: 2 /* signer */ },
+    ],
+    data: tokenTransferData(amount),
+  };
+}
+
+/** Build an SPL Token MintTo instruction. */
+export function tokenMintTo(
+  mint: Address, destination: Address, mintAuthority: Address,
+  amount: bigint, tokenProgramId: Address = address(SPL_TOKEN_PROGRAM_ID),
+): Instruction {
+  return {
+    programAddress: tokenProgramId,
+    accounts: [
+      { address: mint, role: 1 },
+      { address: destination, role: 1 },
+      { address: mintAuthority, role: 2 },
+    ],
+    data: tokenMintToData(amount),
+  };
+}
+
+/** Build an SPL Token Burn instruction. */
+export function tokenBurn(
+  source: Address, mint: Address, authority: Address,
+  amount: bigint, tokenProgramId: Address = address(SPL_TOKEN_PROGRAM_ID),
+): Instruction {
+  return {
+    programAddress: tokenProgramId,
+    accounts: [
+      { address: source, role: 1 },
+      { address: mint, role: 1 },
+      { address: authority, role: 2 },
+    ],
+    data: tokenBurnData(amount),
+  };
 }

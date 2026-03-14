@@ -181,6 +181,28 @@ impl ExecutionResult {
         self.account(pubkey).map(|a| a.data.as_slice())
     }
 
+    /// Panic if execution did not succeed.
+    pub fn assert_success(&self) {
+        if let Err(ref e) = self.raw_result {
+            panic!("expected success, got: {}", self.format_error(e));
+        }
+    }
+
+    /// Panic if execution did not fail with the expected error.
+    pub fn assert_error(&self, expected: ProgramError) {
+        match &self.raw_result {
+            Ok(()) => panic!("expected error {:?}, but execution succeeded", expected),
+            Err(e) => {
+                let actual = ProgramError::from(e.clone());
+                assert_eq!(
+                    actual, expected,
+                    "expected error {:?}, got {:?}",
+                    expected, actual
+                );
+            }
+        }
+    }
+
     fn format_error(&self, e: &InstructionError) -> String {
         let err = ProgramError::from(e.clone());
         if self.logs.is_empty() {
