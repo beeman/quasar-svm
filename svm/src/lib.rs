@@ -1,3 +1,4 @@
+mod check;
 mod error;
 mod program_cache;
 mod svm;
@@ -14,6 +15,7 @@ pub use solana_sdk_ids;
 /// Convenience alias so users can write `quasar_svm::system_program::ID`.
 pub use solana_sdk_ids::system_program;
 
+pub use crate::check::{AccountCheck, AccountCheckBuilder, Check};
 pub use crate::error::ProgramError;
 pub use crate::program_cache::loader_keys;
 pub use crate::svm::{ExecutionResult, QuasarSvm};
@@ -81,6 +83,53 @@ impl QuasarSvm {
     pub fn with_slot(mut self, slot: u64) -> Self {
         self.sysvars.warp_to_slot(slot);
         self
+    }
+
+    /// Execute a transaction and validate the result against a set of checks.
+    /// Panics with detailed output if any check fails.
+    pub fn process_and_validate_transaction(
+        &mut self,
+        instructions: &[Instruction],
+        accounts: &[(Pubkey, Account)],
+        checks: &[Check],
+    ) -> ExecutionResult {
+        let result = self.process_transaction(instructions, accounts);
+        validate_result(&result, checks, &self.sysvars.rent);
+        result
+    }
+
+    /// Execute instructions (non-atomic) and validate the result.
+    /// Panics with detailed output if any check fails.
+    pub fn process_and_validate_instructions(
+        &mut self,
+        instructions: &[Instruction],
+        accounts: &[(Pubkey, Account)],
+        checks: &[Check],
+    ) -> ExecutionResult {
+        let result = self.process_instructions(instructions, accounts);
+        validate_result(&result, checks, &self.sysvars.rent);
+        result
+    }
+}
+
+fn validate_result(result: &ExecutionResult, checks: &[Check], rent: &Rent) {
+    let failures = check::run_checks(result, checks, rent);
+    if !failures.is_empty() {
+        let mut msg = String::from("Validation failed:\n");
+        for f in &failures {
+            msg.push_str(&format!("  - {f}\n"));
+        }
+        if !result.logs.is_empty() {
+            msg.push_str("\nProgram logs:\n");
+            for log in &result.logs {
+                msg.push_str(&format!("  {log}\n"));
+            }
+        }
+        msg.push_str(&format!(
+            "\nCompute units consumed: {}",
+            result.compute_units_consumed
+        ));
+        panic!("{msg}");
     }
 }
 
