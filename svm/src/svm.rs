@@ -64,6 +64,7 @@ pub struct QuasarSvm {
     pub logger: Option<Rc<RefCell<LogCollector>>>,
     pub program_cache: ProgramCache,
     pub sysvars: Sysvars,
+    accounts: HashMap<Pubkey, Account>,
 }
 
 impl Default for QuasarSvm {
@@ -84,11 +85,44 @@ impl QuasarSvm {
             logger: Some(LogCollector::new_ref()),
             program_cache,
             sysvars: Sysvars::default(),
+            accounts: HashMap::new(),
         }
     }
 
     pub fn add_program(&self, program_id: &Pubkey, loader_key: &Pubkey, elf: &[u8]) {
         self.program_cache.add_program(program_id, loader_key, elf);
+    }
+
+    /// Store an account in the SVM's account database.
+    /// Stored accounts are automatically included when processing transactions.
+    pub fn set_account(&mut self, pubkey: Pubkey, account: Account) {
+        self.accounts.insert(pubkey, account);
+    }
+
+    /// Read an account from the SVM's account database.
+    pub fn get_account(&self, pubkey: &Pubkey) -> Option<&Account> {
+        self.accounts.get(pubkey)
+    }
+
+    /// Merge explicit accounts with the stored account database.
+    /// Explicit accounts take priority over stored ones.
+    fn merge_accounts(&self, accounts: &[(Pubkey, Account)]) -> Vec<(Pubkey, Account)> {
+        let explicit: HashSet<Pubkey> = accounts.iter().map(|(k, _)| *k).collect();
+        let mut merged: Vec<(Pubkey, Account)> = self
+            .accounts
+            .iter()
+            .filter(|(k, _)| !explicit.contains(k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        merged.extend_from_slice(accounts);
+        merged
+    }
+
+    /// Write resulting accounts back into the stored account database.
+    fn commit_accounts(&mut self, resulting: &[(Pubkey, Account)]) {
+        for (pubkey, account) in resulting {
+            self.accounts.insert(*pubkey, account.clone());
+        }
     }
 
     fn reset_logger(&mut self) {
@@ -312,6 +346,7 @@ impl QuasarSvm {
 
     /// Execute one or more instructions with shared accounts.
     /// Account state persists between instructions. Non-atomic.
+    /// Accounts from the SVM's database are merged in automatically.
     pub fn process_instructions(
         &mut self,
         instructions: &[Instruction],
@@ -319,7 +354,7 @@ impl QuasarSvm {
     ) -> ExecutionResult {
         self.reset_logger();
 
-        let mut current_accounts = accounts.to_vec();
+        let mut current_accounts = self.merge_accounts(accounts);
         let mut total_compute_units = 0u64;
         let mut total_execution_time = 0u64;
         let mut last_raw_result: Result<(), InstructionError> = Ok(());
@@ -356,6 +391,10 @@ impl QuasarSvm {
             }
         }
 
+        if last_raw_result.is_ok() {
+            self.commit_accounts(&current_accounts);
+        }
+
         let logs = self.drain_logs();
 
         ExecutionResult {
@@ -369,6 +408,7 @@ impl QuasarSvm {
     }
 
     /// Execute multiple instructions as a single atomic transaction.
+    /// Accounts from the SVM's database are merged in automatically.
     pub fn process_transaction(
         &mut self,
         instructions: &[Instruction],
@@ -376,8 +416,10 @@ impl QuasarSvm {
     ) -> ExecutionResult {
         self.reset_logger();
 
+        let merged = self.merge_accounts(accounts);
+
         let (sanitized_message, transaction_accounts) =
-            self.compile_accounts(instructions, accounts);
+            self.compile_accounts(instructions, &merged);
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
@@ -386,15 +428,17 @@ impl QuasarSvm {
             self.compute_budget.max_instruction_trace_length,
         );
 
-        let sysvar_cache = self.sysvars.setup_sysvar_cache(accounts);
+        let sysvar_cache = self.sysvars.setup_sysvar_cache(&merged);
 
         let (compute_units_consumed, execution_time_us, raw_result, return_data) =
             self.process_message(&sanitized_message, &mut transaction_context, &sysvar_cache);
 
         let resulting_accounts = if raw_result.is_ok() {
-            Self::deconstruct_resulting_accounts(&transaction_context, accounts)
+            let result = Self::deconstruct_resulting_accounts(&transaction_context, &merged);
+            self.commit_accounts(&result);
+            result
         } else {
-            accounts.to_vec()
+            merged
         };
 
         let logs = self.drain_logs();
