@@ -2,14 +2,14 @@
 
 Lightweight Solana VM execution for Node.js.
 
-`quasar-svm` runs Solana instructions locally using a native Rust engine. It is designed for simulation-style workflows where you provide program binaries, instructions, and account state, then inspect logs, return data, compute usage, and resulting accounts.
+`quasar-svm` runs Solana instructions locally using a native Rust engine. It is designed for simulation workflows where you provide program binaries, instructions, and account state, then inspect logs, return data, compute usage, and resulting accounts.
 
 ## What it does
 
 - Executes Solana instructions and transactions off-chain
 - Loads custom program ELFs
 - Supports bundled SPL Token, Token-2022, and Associated Token Account programs
-- Exposes both `@solana/web3.js` and Solana Kit-style APIs
+- Exposes both `@solana/web3.js` and `@solana/kit` API's
 - Returns logs, return data, compute units, execution time, and updated accounts
 
 ## Install
