@@ -1,5 +1,5 @@
 import type { Address } from "@solana/addresses";
-import { address, getAddressEncoder, getAddressDecoder } from "@solana/addresses";
+import { address, getAddressEncoder, getAddressDecoder, getProgramDerivedAddress } from "@solana/addresses";
 import type { Instruction } from "@solana/instructions";
 import { lamports } from "@solana/rpc-types";
 import * as ffi from "../ffi.js";
@@ -142,6 +142,16 @@ export class QuasarSvm {
   /** Store a pre-initialized Token-2022 token account. */
   addTokenAccount2022(pubkey: Address, opts: TokenAccountOpts): void {
     this.addTokenAccountWithProgram(pubkey, opts, SPL_TOKEN_2022_PROGRAM_ID);
+  }
+
+  /** Derive the ATA address and store a pre-initialized token account. Returns the ATA address. */
+  async addAssociatedTokenAccount(wallet: Address, mint: Address, amount: bigint, tokenProgramId: Address = address(SPL_TOKEN_PROGRAM_ID)): Promise<Address> {
+    const [ata] = await getProgramDerivedAddress({
+      programAddress: address(SPL_ASSOCIATED_TOKEN_PROGRAM_ID),
+      seeds: [this.enc(wallet), this.enc(tokenProgramId), this.enc(mint)],
+    });
+    this.addTokenAccountWithProgram(ata, { mint, owner: wallet, amount }, tokenProgramId as string);
+    return ata;
   }
 
   /** Store an account in the SVM's persistent account database. */

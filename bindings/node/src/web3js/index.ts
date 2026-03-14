@@ -112,6 +112,17 @@ export class QuasarSvm {
     this.addTokenAccountWithProgram(pubkey, opts, SPL_TOKEN_2022_PROGRAM_ID);
   }
 
+  /** Derive the ATA address and store a pre-initialized token account. Returns the ATA pubkey. */
+  addAssociatedTokenAccount(wallet: PublicKey, mint: PublicKey, amount: bigint, tokenProgramId = new PublicKey(SPL_TOKEN_PROGRAM_ID)): PublicKey {
+    const ataProgramId = new PublicKey(SPL_ASSOCIATED_TOKEN_PROGRAM_ID);
+    const [ata] = PublicKey.findProgramAddressSync(
+      [wallet.toBuffer(), tokenProgramId.toBuffer(), mint.toBuffer()],
+      ataProgramId
+    );
+    this.addTokenAccountWithProgram(ata, { mint, owner: wallet, amount }, tokenProgramId.toBase58());
+    return ata;
+  }
+
   /** Store an account in the SVM's persistent account database. */
   setAccount(pubkey: PublicKey, account: AccountInfo<Buffer>): void {
     const dataBuf = account.data.length > 0 ? Buffer.from(account.data) : null;

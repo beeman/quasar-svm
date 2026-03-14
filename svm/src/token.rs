@@ -84,6 +84,21 @@ impl Default for TokenAccountState {
     }
 }
 
+impl Default for Token {
+    fn default() -> Self {
+        Self {
+            mint: Pubkey::default(),
+            owner: Pubkey::default(),
+            amount: 0,
+            delegate: None,
+            state: TokenAccountState::Initialized,
+            is_native: None,
+            delegated_amount: 0,
+            close_authority: None,
+        }
+    }
+}
+
 impl Token {
     pub const LEN: usize = 165;
 
@@ -215,6 +230,34 @@ impl QuasarSvm {
         self.set_account(*pubkey, account);
     }
 
+    /// Derive the ATA address and store a pre-initialized token account.
+    /// Works for both Token and Token-2022. Returns the derived ATA pubkey.
+    pub fn add_associated_token_account(
+        &mut self,
+        wallet: &Pubkey,
+        mint: &Pubkey,
+        amount: u64,
+        token_program_id: &Pubkey,
+    ) -> Pubkey {
+        let ata = get_associated_token_address(wallet, mint, token_program_id);
+        let data = Token {
+            mint: *mint,
+            owner: *wallet,
+            amount,
+            ..Default::default()
+        }
+        .pack();
+        let account = Account {
+            lamports: Rent::default().minimum_balance(Token::LEN),
+            data,
+            owner: *token_program_id,
+            executable: false,
+            rent_epoch: 0,
+        };
+        self.set_account(ata, account);
+        ata
+    }
+
     /// Builder-style: store a pre-initialized SPL Token mint account.
     pub fn with_mint_account(mut self, pubkey: &Pubkey, mint: &Mint) -> Self {
         self.add_mint_account(pubkey, mint);
@@ -226,4 +269,21 @@ impl QuasarSvm {
         self.add_token_account(pubkey, token);
         self
     }
+}
+
+/// Derive the associated token account address.
+pub fn get_associated_token_address(
+    wallet: &Pubkey,
+    mint: &Pubkey,
+    token_program_id: &Pubkey,
+) -> Pubkey {
+    let (ata, _bump) = Pubkey::find_program_address(
+        &[
+            wallet.as_ref(),
+            token_program_id.as_ref(),
+            mint.as_ref(),
+        ],
+        &crate::SPL_ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    ata
 }
