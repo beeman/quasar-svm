@@ -1,5 +1,6 @@
 import { type TransactionInstruction, type KeyedAccountInfo, PublicKey } from "@solana/web3.js";
 import type { ExecutionResult } from "../index.js";
+import { programErrorFromStatus } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // Serialization (JS -> wire format)
@@ -76,7 +77,7 @@ export function serializeAccounts(accounts: KeyedAccountInfo[]): Buffer {
 export function deserializeResult(data: Buffer): ExecutionResult<KeyedAccountInfo> {
   let o = 0;
 
-  const status = data.readInt32LE(o);
+  const rawStatus = data.readInt32LE(o);
   o += 4;
   const computeUnits = data.readBigUInt64LE(o);
   o += 8;
@@ -121,6 +122,11 @@ export function deserializeResult(data: Buffer): ExecutionResult<KeyedAccountInf
   const errorMessage =
     emLen > 0 ? data.subarray(o, o + emLen).toString("utf8") : null;
 
+  const status =
+    rawStatus === 0
+      ? { ok: true as const }
+      : { ok: false as const, error: programErrorFromStatus(rawStatus, errorMessage) };
+
   return {
     status,
     computeUnits,
@@ -128,6 +134,5 @@ export function deserializeResult(data: Buffer): ExecutionResult<KeyedAccountInf
     returnData,
     accounts,
     logs,
-    errorMessage,
   };
 }

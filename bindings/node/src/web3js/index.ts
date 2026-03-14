@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import type { TransactionInstruction, KeyedAccountInfo } from "@solana/web3.js";
+import type { TransactionInstruction, KeyedAccountInfo, AccountInfo } from "@solana/web3.js";
 import * as ffi from "../ffi.js";
 import {
   serializeInstructions,
@@ -18,7 +18,7 @@ import {
 } from "../programs.js";
 
 export type { Web3ExecutionResult } from "./types.js";
-export type { ExecutionResult, Clock, EpochSchedule } from "../index.js";
+export type { ExecutionResult, ExecutionStatus, ProgramError, Clock, EpochSchedule } from "../index.js";
 export { SPL_TOKEN_PROGRAM_ID, SPL_TOKEN_2022_PROGRAM_ID, SPL_ASSOCIATED_TOKEN_PROGRAM_ID, LOADER_V2, LOADER_V3 } from "../programs.js";
 
 export class QuasarSvm {
@@ -68,6 +68,51 @@ export class QuasarSvm {
 
   addSystemProgram(): this {
     return this;
+  }
+
+  /** Store an account in the SVM's persistent account database. */
+  setAccount(pubkey: PublicKey, account: AccountInfo<Buffer>): void {
+    const dataBuf = account.data.length > 0 ? Buffer.from(account.data) : null;
+    this.check(
+      ffi.quasar_svm_set_account(
+        this.ptr,
+        pubkey.toBuffer(),
+        account.owner.toBuffer(),
+        BigInt(account.lamports),
+        dataBuf,
+        account.data.length,
+        account.executable
+      )
+    );
+  }
+
+  /** Read an account from the SVM's persistent account database. */
+  getAccount(pubkey: PublicKey): KeyedAccountInfo | null {
+    const ptrOut = [null as unknown];
+    const lenOut = [BigInt(0)];
+    const code = ffi.quasar_svm_get_account(this.ptr, pubkey.toBuffer(), ptrOut, lenOut);
+    if (code !== 0) return null;
+
+    const resultPtr = ptrOut[0];
+    const resultLen = Number(lenOut[0]);
+    const buf = Buffer.from(ffi.koffi.decode(resultPtr, "uint8_t", resultLen));
+    ffi.quasar_result_free(resultPtr, resultLen);
+
+    // Deserialize: [32] pubkey [32] owner [8] lamports [4] data_len [N] data [1] executable
+    let o = 0;
+    const accountId = new PublicKey(buf.subarray(o, o + 32));
+    o += 32;
+    const owner = new PublicKey(buf.subarray(o, o + 32));
+    o += 32;
+    const lamports = buf.readBigUInt64LE(o);
+    o += 8;
+    const dLen = buf.readUInt32LE(o);
+    o += 4;
+    const data = Buffer.from(buf.subarray(o, o + dLen));
+    o += dLen;
+    const executable = buf[o] !== 0;
+
+    return { accountId, accountInfo: { owner, lamports, data, executable } };
   }
 
   setClock(opts: Clock): void {

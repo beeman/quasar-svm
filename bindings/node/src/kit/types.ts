@@ -13,4 +13,4 @@ export interface SvmAccount {
 
 export type KitExecutionResult = ExecutionResult<SvmAccount>;
 
-export type { ExecutionResult, Clock, EpochSchedule } from "../index.js";
+export type { ExecutionResult, ExecutionStatus, ProgramError, Clock, EpochSchedule } from "../index.js";

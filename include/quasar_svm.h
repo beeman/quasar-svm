@@ -55,6 +55,27 @@ int32_t quasar_svm_set_epoch_schedule(QuasarSvm *svm,
 int32_t quasar_svm_set_compute_budget(QuasarSvm *svm, uint64_t max_units);
 
 /**
+ * Store an account in the SVM's account database.
+ * The account is provided as raw fields (not wire-format).
+ */
+int32_t quasar_svm_set_account(QuasarSvm *svm,
+                               const uint8_t (*pubkey)[32],
+                               const uint8_t (*owner)[32],
+                               uint64_t lamports,
+                               const uint8_t *data,
+                               uint64_t data_len,
+                               bool executable);
+
+/**
+ * Read an account from the SVM's account database.
+ * Returns serialized account data via out-pointers, or QUASAR_ERR_EXECUTION if not found.
+ */
+int32_t quasar_svm_get_account(const QuasarSvm *svm,
+                               const uint8_t (*pubkey)[32],
+                               uint8_t **result_out,
+                               uint64_t *result_len_out);
+
+/**
  * Execute one or more instructions with shared, persisted account state.
  *
  * `instructions` / `instructions_len`: count-prefixed serialized instructions.

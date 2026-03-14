@@ -63,6 +63,14 @@ export const quasar_svm_set_compute_budget = lib.func(
   "int32_t quasar_svm_set_compute_budget(void *svm, uint64_t max_units)"
 );
 
+export const quasar_svm_set_account = lib.func(
+  "int32_t quasar_svm_set_account(void *svm, const void *pubkey, const void *owner, uint64_t lamports, const void *data, uint64_t data_len, bool executable)"
+);
+
+export const quasar_svm_get_account = lib.func(
+  "int32_t quasar_svm_get_account(const void *svm, const void *pubkey, _Out_ void **result_out, _Out_ uint64_t *result_len_out)"
+);
+
 export const quasar_svm_process_instructions = lib.func(
   "int32_t quasar_svm_process_instructions(void *svm, const void *instructions, uint64_t instructions_len, const void *accounts, uint64_t accounts_len, _Out_ void **result_out, _Out_ uint64_t *result_len_out)"
 );

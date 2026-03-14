@@ -1,6 +1,7 @@
 import type { Address } from "@solana/addresses";
-import { address, getAddressEncoder } from "@solana/addresses";
+import { address, getAddressEncoder, getAddressDecoder } from "@solana/addresses";
 import type { Instruction } from "@solana/instructions";
+import { lamports } from "@solana/rpc-types";
 import * as ffi from "../ffi.js";
 import {
   serializeInstructions,
@@ -23,10 +24,11 @@ import {
 } from "../programs.js";
 
 export type { KitExecutionResult, SvmAccount } from "./types.js";
-export type { ExecutionResult, Clock, EpochSchedule } from "../index.js";
+export type { ExecutionResult, ExecutionStatus, ProgramError, Clock, EpochSchedule } from "../index.js";
 export { SPL_TOKEN_PROGRAM_ID, SPL_TOKEN_2022_PROGRAM_ID, SPL_ASSOCIATED_TOKEN_PROGRAM_ID, LOADER_V2, LOADER_V3 } from "../programs.js";
 
 const addressEncoder = getAddressEncoder();
+const addressDecoder = getAddressDecoder();
 
 export class QuasarSvm {
   private ptr: unknown;
@@ -75,6 +77,63 @@ export class QuasarSvm {
 
   addSystemProgram(): this {
     return this;
+  }
+
+  /** Store an account in the SVM's persistent account database. */
+  setAccount(account: SvmAccount): void {
+    const dataBuf = account.data.length > 0 ? Buffer.from(account.data) : null;
+    this.check(
+      ffi.quasar_svm_set_account(
+        this.ptr,
+        Buffer.from(addressEncoder.encode(account.address)),
+        Buffer.from(addressEncoder.encode(account.programAddress)),
+        BigInt(account.lamports),
+        dataBuf,
+        account.data.length,
+        account.executable
+      )
+    );
+  }
+
+  /** Read an account from the SVM's persistent account database. */
+  getAccount(pubkey: Address): SvmAccount | null {
+    const ptrOut = [null as unknown];
+    const lenOut = [BigInt(0)];
+    const code = ffi.quasar_svm_get_account(
+      this.ptr,
+      Buffer.from(addressEncoder.encode(pubkey)),
+      ptrOut,
+      lenOut
+    );
+    if (code !== 0) return null;
+
+    const resultPtr = ptrOut[0];
+    const resultLen = Number(lenOut[0]);
+    const buf = Buffer.from(ffi.koffi.decode(resultPtr, "uint8_t", resultLen));
+    ffi.quasar_result_free(resultPtr, resultLen);
+
+    // Deserialize: [32] pubkey [32] owner [8] lamports [4] data_len [N] data [1] executable
+    let o = 0;
+    const acctAddress = addressDecoder.decode(buf.subarray(o, o + 32));
+    o += 32;
+    const programAddress = addressDecoder.decode(buf.subarray(o, o + 32));
+    o += 32;
+    const rawLamports = buf.readBigUInt64LE(o);
+    o += 8;
+    const dLen = buf.readUInt32LE(o);
+    o += 4;
+    const data = new Uint8Array(buf.subarray(o, o + dLen));
+    o += dLen;
+    const executable = buf[o] !== 0;
+
+    return {
+      address: acctAddress,
+      data,
+      executable,
+      lamports: lamports(rawLamports),
+      programAddress,
+      space: BigInt(dLen),
+    };
   }
 
   setClock(opts: Clock): void {
