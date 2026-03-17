@@ -7,7 +7,7 @@ use agave_feature_set::FeatureSet;
 use agave_syscalls::{
     create_program_runtime_environment_v1, create_program_runtime_environment_v2,
 };
-use solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount};
+use solana_account::{Account as SolanaAccount, AccountSharedData, ReadableAccount, WritableAccount};
 use solana_compute_budget::compute_budget::ComputeBudget;
 use solana_hash::Hash;
 use solana_instruction::{BorrowedAccountMeta, BorrowedInstruction, Instruction};
@@ -24,8 +24,12 @@ use solana_svm_timings::ExecuteTimings;
 use solana_svm_transaction::instruction::SVMInstruction;
 use solana_transaction_context::{IndexOfAccount, TransactionContext};
 
+use spl_token::state::{Account as SplTokenAccount, Mint as SplMint};
+use solana_program_pack::Pack;
+
 use crate::program_cache::ProgramCache;
 use crate::sysvars::Sysvars;
+use crate::{Account, AccountDiff};
 
 struct NoOpCallback;
 
@@ -54,7 +58,8 @@ pub struct ExecutionResult {
     pub execution_time_us: u64,
     pub raw_result: Result<(), InstructionError>,
     pub return_data: Vec<u8>,
-    pub resulting_accounts: Vec<(Pubkey, Account)>,
+    pub accounts: Vec<Account>,
+    pub modified_accounts: Vec<AccountDiff>,
     pub logs: Vec<String>,
 }
 
@@ -64,7 +69,7 @@ pub struct QuasarSvm {
     pub logger: Option<Rc<RefCell<LogCollector>>>,
     pub program_cache: ProgramCache,
     pub sysvars: Sysvars,
-    accounts: HashMap<Pubkey, Account>,
+    accounts: HashMap<Pubkey, SolanaAccount>,
 }
 
 impl Default for QuasarSvm {
@@ -95,13 +100,16 @@ impl QuasarSvm {
 
     /// Store an account in the SVM's account database.
     /// Stored accounts are automatically included when processing transactions.
-    pub fn set_account(&mut self, pubkey: Pubkey, account: Account) {
-        self.accounts.insert(pubkey, account);
+    pub fn set_account(&mut self, account: Account) {
+        let (pubkey, acct) = account.to_pair();
+        self.accounts.insert(pubkey, acct);
     }
 
     /// Read an account from the SVM's account database.
-    pub fn get_account(&self, pubkey: &Pubkey) -> Option<&Account> {
-        self.accounts.get(pubkey)
+    pub fn get_account(&self, pubkey: &Pubkey) -> Option<Account> {
+        self.accounts
+            .get(pubkey)
+            .map(|a| Account::from_pair(*pubkey, a.clone()))
     }
 
     /// Give lamports to an account, creating it if it doesn't exist.
@@ -109,7 +117,7 @@ impl QuasarSvm {
     pub fn airdrop(&mut self, pubkey: &Pubkey, lamports: u64) {
         let existing = self.accounts.get(pubkey);
         let new_lamports = existing.map_or(lamports, |a| a.lamports + lamports);
-        let account = Account {
+        let account = SolanaAccount {
             lamports: new_lamports,
             data: existing.map_or_else(Vec::new, |a| a.data.clone()),
             owner: existing.map_or(solana_sdk_ids::system_program::ID, |a| a.owner),
@@ -122,7 +130,7 @@ impl QuasarSvm {
     /// Create a rent-exempt account with the given space and owner.
     pub fn create_account(&mut self, pubkey: &Pubkey, space: usize, owner: &Pubkey) {
         let lamports = self.sysvars.rent.minimum_balance(space);
-        let account = Account {
+        let account = SolanaAccount {
             lamports,
             data: vec![0u8; space],
             owner: *owner,
@@ -132,15 +140,90 @@ impl QuasarSvm {
         self.accounts.insert(*pubkey, account);
     }
 
-    /// Execute a transaction without committing any state changes.
-    pub fn simulate_transaction(
+    /// Set the token balance (amount) of an existing token account in the store.
+    /// Panics if the account is not found or is not a valid SPL Token account.
+    pub fn set_token_balance(&mut self, address: &Pubkey, amount: u64) {
+        let acct = self
+            .accounts
+            .get_mut(address)
+            .unwrap_or_else(|| panic!("set_token_balance: account {address} not found"));
+        let mut token = SplTokenAccount::unpack(&acct.data)
+            .unwrap_or_else(|_| panic!("set_token_balance: account {address} is not a valid token account"));
+        token.amount = amount;
+        SplTokenAccount::pack(token, &mut acct.data).unwrap();
+    }
+
+    /// Set the supply of an existing mint account in the store.
+    /// Panics if the account is not found or is not a valid SPL Mint account.
+    pub fn set_mint_supply(&mut self, address: &Pubkey, supply: u64) {
+        let acct = self
+            .accounts
+            .get_mut(address)
+            .unwrap_or_else(|| panic!("set_mint_supply: account {address} not found"));
+        let mut mint = SplMint::unpack(&acct.data)
+            .unwrap_or_else(|_| panic!("set_mint_supply: account {address} is not a valid mint account"));
+        mint.supply = supply;
+        SplMint::pack(mint, &mut acct.data).unwrap();
+    }
+
+    /// Set the clock's unix_timestamp only.
+    pub fn warp_to_timestamp(&mut self, timestamp: i64) {
+        self.sysvars.clock.unix_timestamp = timestamp;
+    }
+
+    /// Execute a single instruction without committing any state changes.
+    pub fn simulate_instruction(
+        &mut self,
+        instruction: &Instruction,
+        accounts: &[Account],
+    ) -> ExecutionResult {
+        self.execute_inner(std::slice::from_ref(instruction), accounts, false)
+    }
+
+    /// Execute instructions without committing any state changes.
+    pub fn simulate_instruction_chain(
         &mut self,
         instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
+        accounts: &[Account],
+    ) -> ExecutionResult {
+        self.execute_inner(instructions, accounts, false)
+    }
+
+    /// Execute a single instruction atomically.
+    /// Accounts from the SVM's database are merged in automatically.
+    pub fn process_instruction(
+        &mut self,
+        instruction: &Instruction,
+        accounts: &[Account],
+    ) -> ExecutionResult {
+        self.execute_inner(std::slice::from_ref(instruction), accounts, true)
+    }
+
+    /// Execute multiple instructions as a single atomic chain.
+    /// Accounts from the SVM's database are merged in automatically.
+    pub fn process_instruction_chain(
+        &mut self,
+        instructions: &[Instruction],
+        accounts: &[Account],
+    ) -> ExecutionResult {
+        self.execute_inner(instructions, accounts, true)
+    }
+
+    fn execute_inner(
+        &mut self,
+        instructions: &[Instruction],
+        accounts: &[Account],
+        commit: bool,
     ) -> ExecutionResult {
         self.reset_logger();
 
-        let merged = self.merge_accounts(accounts);
+        let pairs: Vec<(Pubkey, SolanaAccount)> = accounts.iter().map(|a| a.to_pair()).collect();
+        let merged = self.merge_accounts(&pairs);
+
+        let pre_accounts: HashMap<Pubkey, Account> = merged
+            .iter()
+            .map(|(k, v)| (*k, Account::from_pair(*k, v.clone())))
+            .collect();
 
         let (sanitized_message, transaction_accounts) =
             self.compile_accounts(instructions, &merged);
@@ -157,12 +240,18 @@ impl QuasarSvm {
         let (compute_units_consumed, execution_time_us, raw_result, return_data) =
             self.process_message(&sanitized_message, &mut transaction_context, &sysvar_cache);
 
-        // Read resulting accounts but DON'T commit them
-        let resulting_accounts = if raw_result.is_ok() {
-            Self::deconstruct_resulting_accounts(&transaction_context, &merged)
+        let resulting_pairs = if raw_result.is_ok() {
+            let result = Self::deconstruct_resulting_accounts(&transaction_context, &merged);
+            if commit {
+                self.commit_accounts(&result);
+            }
+            result
         } else {
             merged
         };
+
+        let result_accounts = Self::pairs_to_svm_accounts(&resulting_pairs);
+        let modified_accounts = Self::compute_diffs(&pre_accounts, &resulting_pairs);
 
         let logs = self.drain_logs();
 
@@ -171,26 +260,17 @@ impl QuasarSvm {
             execution_time_us,
             raw_result,
             return_data,
-            resulting_accounts,
+            accounts: result_accounts,
+            modified_accounts,
             logs,
         }
     }
 
-    /// Save a snapshot of the current account state.
-    pub fn snapshot(&self) -> HashMap<Pubkey, Account> {
-        self.accounts.clone()
-    }
-
-    /// Restore account state from a previous snapshot.
-    pub fn restore(&mut self, snapshot: HashMap<Pubkey, Account>) {
-        self.accounts = snapshot;
-    }
-
     /// Merge explicit accounts with the stored account database.
     /// Explicit accounts take priority over stored ones.
-    fn merge_accounts(&self, accounts: &[(Pubkey, Account)]) -> Vec<(Pubkey, Account)> {
+    fn merge_accounts(&self, accounts: &[(Pubkey, SolanaAccount)]) -> Vec<(Pubkey, SolanaAccount)> {
         let explicit: HashSet<Pubkey> = accounts.iter().map(|(k, _)| *k).collect();
-        let mut merged: Vec<(Pubkey, Account)> = self
+        let mut merged: Vec<(Pubkey, SolanaAccount)> = self
             .accounts
             .iter()
             .filter(|(k, _)| !explicit.contains(k))
@@ -201,7 +281,7 @@ impl QuasarSvm {
     }
 
     /// Write resulting accounts back into the stored account database.
-    fn commit_accounts(&mut self, resulting: &[(Pubkey, Account)]) {
+    fn commit_accounts(&mut self, resulting: &[(Pubkey, SolanaAccount)]) {
         for (pubkey, account) in resulting {
             self.accounts.insert(*pubkey, account.clone());
         }
@@ -211,7 +291,7 @@ impl QuasarSvm {
         self.logger = Some(LogCollector::new_ref());
     }
 
-    pub fn drain_logs(&self) -> Vec<String> {
+    pub(crate) fn drain_logs(&self) -> Vec<String> {
         self.logger
             .as_ref()
             .map(|rc| rc.borrow().get_recorded_content().to_vec())
@@ -219,7 +299,7 @@ impl QuasarSvm {
     }
 
     /// Build the instructions sysvar account.
-    fn build_instructions_sysvar(instructions: &[Instruction]) -> (Pubkey, Account) {
+    fn build_instructions_sysvar(instructions: &[Instruction]) -> (Pubkey, SolanaAccount) {
         let data = construct_instructions_data(
             instructions
                 .iter()
@@ -241,7 +321,7 @@ impl QuasarSvm {
         );
         (
             solana_instructions_sysvar::ID,
-            Account {
+            SolanaAccount {
                 lamports: 0,
                 data,
                 owner: solana_sysvar_id::ID,
@@ -255,7 +335,7 @@ impl QuasarSvm {
     fn compile_accounts(
         &self,
         instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
+        accounts: &[(Pubkey, SolanaAccount)],
     ) -> (SanitizedMessage, Vec<(Pubkey, AccountSharedData)>) {
         let message = Message::new(instructions, None);
         let sanitized_message =
@@ -271,7 +351,7 @@ impl QuasarSvm {
             if !account_keys.contains(pid) {
                 let program_accounts = self.program_cache.maybe_create_program_accounts(pid);
                 if program_accounts.is_empty() {
-                    let mut stub = Account::default();
+                    let mut stub = SolanaAccount::default();
                     stub.set_executable(true);
                     fallbacks.insert(*pid, stub);
                 } else {
@@ -319,8 +399,8 @@ impl QuasarSvm {
 
     fn deconstruct_resulting_accounts(
         transaction_context: &TransactionContext,
-        original_accounts: &[(Pubkey, Account)],
-    ) -> Vec<(Pubkey, Account)> {
+        original_accounts: &[(Pubkey, SolanaAccount)],
+    ) -> Vec<(Pubkey, SolanaAccount)> {
         original_accounts
             .iter()
             .map(|(pubkey, account)| {
@@ -328,7 +408,7 @@ impl QuasarSvm {
                     .find_index_of_account(pubkey)
                     .map(|index| {
                         let account_ref = transaction_context.accounts().try_borrow(index).unwrap();
-                        let resulting_account = Account {
+                        let resulting_account = SolanaAccount {
                             lamports: account_ref.lamports(),
                             data: account_ref.data().to_vec(),
                             owner: *account_ref.owner(),
@@ -340,6 +420,38 @@ impl QuasarSvm {
                     .unwrap_or((*pubkey, account.clone()))
             })
             .collect()
+    }
+
+    /// Convert a list of (Pubkey, SolanaAccount) pairs to Vec<Account>.
+    fn pairs_to_svm_accounts(pairs: &[(Pubkey, SolanaAccount)]) -> Vec<Account> {
+        pairs
+            .iter()
+            .map(|(k, v)| Account::from_pair(*k, v.clone()))
+            .collect()
+    }
+
+    /// Compute byte-level diffs between pre-execution and post-execution account states.
+    fn compute_diffs(
+        pre: &HashMap<Pubkey, Account>,
+        post: &[(Pubkey, SolanaAccount)],
+    ) -> Vec<AccountDiff> {
+        let mut diffs = Vec::new();
+        for (pubkey, post_account) in post {
+            if let Some(pre_account) = pre.get(pubkey) {
+                let post_svm = Account::from_pair(*pubkey, post_account.clone());
+                if pre_account.lamports != post_svm.lamports
+                    || pre_account.data != post_svm.data
+                    || pre_account.owner != post_svm.owner
+                {
+                    diffs.push(AccountDiff {
+                        address: *pubkey,
+                        pre: pre_account.clone(),
+                        post: post_svm,
+                    });
+                }
+            }
+        }
+        diffs
     }
 
     fn process_message<'a>(
@@ -424,114 +536,5 @@ impl QuasarSvm {
             raw_result,
             return_data,
         )
-    }
-
-    /// Execute one or more instructions with shared accounts.
-    /// Account state persists between instructions. Non-atomic.
-    /// Accounts from the SVM's database are merged in automatically.
-    pub fn process_instructions(
-        &mut self,
-        instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
-    ) -> ExecutionResult {
-        self.reset_logger();
-
-        let mut current_accounts = self.merge_accounts(accounts);
-        let mut total_compute_units = 0u64;
-        let mut total_execution_time = 0u64;
-        let mut last_raw_result: Result<(), InstructionError> = Ok(());
-        let mut last_return_data = Vec::new();
-
-        let sysvar_cache = self.sysvars.setup_sysvar_cache(accounts);
-
-        for instruction in instructions {
-            let (sanitized_message, transaction_accounts) =
-                self.compile_accounts(std::slice::from_ref(instruction), &current_accounts);
-
-            let mut transaction_context = TransactionContext::new(
-                transaction_accounts,
-                self.sysvars.rent.clone(),
-                self.compute_budget.max_instruction_stack_depth,
-                self.compute_budget.max_instruction_trace_length,
-            );
-
-            let (cu, time, result, ret_data) =
-                self.process_message(&sanitized_message, &mut transaction_context, &sysvar_cache);
-
-            total_compute_units += cu;
-            total_execution_time += time;
-            last_return_data = ret_data;
-
-            if result.is_ok() {
-                current_accounts =
-                    Self::deconstruct_resulting_accounts(&transaction_context, &current_accounts);
-            }
-
-            last_raw_result = result;
-            if last_raw_result.is_err() {
-                break;
-            }
-        }
-
-        if last_raw_result.is_ok() {
-            self.commit_accounts(&current_accounts);
-        }
-
-        let logs = self.drain_logs();
-
-        ExecutionResult {
-            compute_units_consumed: total_compute_units,
-            execution_time_us: total_execution_time,
-            raw_result: last_raw_result,
-            return_data: last_return_data,
-            resulting_accounts: current_accounts,
-            logs,
-        }
-    }
-
-    /// Execute multiple instructions as a single atomic transaction.
-    /// Accounts from the SVM's database are merged in automatically.
-    pub fn process_transaction(
-        &mut self,
-        instructions: &[Instruction],
-        accounts: &[(Pubkey, Account)],
-    ) -> ExecutionResult {
-        self.reset_logger();
-
-        let merged = self.merge_accounts(accounts);
-
-        let (sanitized_message, transaction_accounts) =
-            self.compile_accounts(instructions, &merged);
-
-        let mut transaction_context = TransactionContext::new(
-            transaction_accounts,
-            self.sysvars.rent.clone(),
-            self.compute_budget.max_instruction_stack_depth,
-            self.compute_budget.max_instruction_trace_length,
-        );
-
-        let sysvar_cache = self.sysvars.setup_sysvar_cache(&merged);
-
-        let (compute_units_consumed, execution_time_us, raw_result, return_data) =
-            self.process_message(&sanitized_message, &mut transaction_context, &sysvar_cache);
-
-        let resulting_accounts = if raw_result.is_ok() {
-            let result = Self::deconstruct_resulting_accounts(&transaction_context, &merged);
-            self.commit_accounts(&result);
-            result
-        } else {
-            merged
-        };
-
-        let logs = self.drain_logs();
-
-        ExecutionResult {
-            compute_units_consumed,
-            execution_time_us,
-            raw_result,
-            return_data,
-            resulting_accounts,
-            logs,
-        }
     }
 }

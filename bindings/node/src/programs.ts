@@ -11,6 +11,8 @@ export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 export const LOADER_V2 = 2;
 export const LOADER_V3 = 3;
 
+export const LAMPORTS_PER_SOL = 1_000_000_000n;
+
 const programsDir = path.resolve(__dirname, "..", "programs");
 
 export function loadElf(name: string): Uint8Array {

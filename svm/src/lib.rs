@@ -3,9 +3,7 @@ mod program_cache;
 mod svm;
 mod sysvars;
 pub mod token;
-pub mod user;
 
-pub use solana_account::Account;
 pub use solana_clock::Clock;
 pub use solana_instruction::{AccountMeta, Instruction};
 pub use solana_instruction_error::InstructionError;
@@ -21,6 +19,55 @@ pub use crate::program_cache::loader_keys;
 pub use crate::svm::{ExecutionResult, QuasarSvm};
 pub use crate::sysvars::Sysvars;
 pub use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    pub address: Pubkey,
+    pub lamports: u64,
+    pub data: Vec<u8>,
+    pub owner: Pubkey,
+    pub executable: bool,
+}
+
+impl Account {
+    pub fn from_pair(address: Pubkey, account: solana_account::Account) -> Self {
+        Self {
+            address,
+            lamports: account.lamports,
+            data: account.data,
+            owner: account.owner,
+            executable: account.executable,
+        }
+    }
+
+    pub fn to_pair(&self) -> (Pubkey, solana_account::Account) {
+        (
+            self.address,
+            solana_account::Account {
+                lamports: self.lamports,
+                data: self.data.clone(),
+                owner: self.owner,
+                executable: self.executable,
+                rent_epoch: 0,
+            },
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AccountDiff
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountDiff {
+    pub address: Pubkey,
+    pub pre: Account,
+    pub post: Account,
+}
 
 // ---------------------------------------------------------------------------
 // Bundled SPL programs
@@ -52,12 +99,6 @@ impl QuasarSvm {
         self
     }
 
-    /// No-op — system program is already built in. Exists for parity with
-    /// the TypeScript API.
-    pub fn with_system_program(self) -> Self {
-        self
-    }
-
     /// Load the bundled SPL Token program.
     pub fn with_token_program(self) -> Self {
         let elf = include_bytes!("../../programs/spl_token.so");
@@ -81,14 +122,20 @@ impl QuasarSvm {
     }
 
     /// Pre-populate an account in the SVM's account database.
-    pub fn with_account(mut self, pubkey: Pubkey, account: Account) -> Self {
-        self.set_account(pubkey, account);
+    pub fn with_account(mut self, account: Account) -> Self {
+        self.set_account(account);
         self
     }
 
     /// Set the clock slot (convenience for `sysvars.warp_to_slot`).
     pub fn with_slot(mut self, slot: u64) -> Self {
         self.sysvars.warp_to_slot(slot);
+        self
+    }
+
+    /// Set the compute budget (builder-style).
+    pub fn with_compute_budget(mut self, max_units: u64) -> Self {
+        self.compute_budget.compute_unit_limit = max_units;
         self
     }
 
@@ -150,12 +197,9 @@ impl ExecutionResult {
         }
     }
 
-    /// Look up a resulting account by pubkey.
-    pub fn account(&self, pubkey: &Pubkey) -> Option<&Account> {
-        self.resulting_accounts
-            .iter()
-            .find(|(k, _)| k == pubkey)
-            .map(|(_, a)| a)
+    /// Look up a resulting account by address.
+    pub fn account(&self, address: &Pubkey) -> Option<&Account> {
+        self.accounts.iter().find(|a| a.address == *address)
     }
 
     /// Print transaction logs to stdout, nicely formatted.
@@ -167,19 +211,19 @@ impl ExecutionResult {
 
     /// Deserialize a resulting account's data using borsh.
     #[cfg(feature = "borsh")]
-    pub fn account_data<T: borsh::BorshDeserialize>(&self, pubkey: &Pubkey) -> Option<T> {
-        self.account(pubkey)
+    pub fn account_data<T: borsh::BorshDeserialize>(&self, address: &Pubkey) -> Option<T> {
+        self.account(address)
             .and_then(|a| T::try_from_slice(&a.data).ok())
     }
 
     /// Get lamports of a resulting account. Returns 0 if not found.
-    pub fn lamports(&self, pubkey: &Pubkey) -> u64 {
-        self.account(pubkey).map_or(0, |a| a.lamports)
+    pub fn lamports(&self, address: &Pubkey) -> u64 {
+        self.account(address).map_or(0, |a| a.lamports)
     }
 
     /// Get account data bytes of a resulting account.
-    pub fn data(&self, pubkey: &Pubkey) -> Option<&[u8]> {
-        self.account(pubkey).map(|a| a.data.as_slice())
+    pub fn data(&self, address: &Pubkey) -> Option<&[u8]> {
+        self.account(address).map(|a| a.data.as_slice())
     }
 
     /// Panic if execution did not succeed.
