@@ -2,8 +2,18 @@
 name = "quasar-svm"
 version = "0.1.0"
 edition = "2021"
+authors = ["Blueshift <xblueshift.gg>"]
+description = "Lightweight Solana virtual machine for local transaction execution"
+license = "MIT"
+repository = "https://github.com/blueshift-gg/quasar-svm"
+homepage = "https://github.com/blueshift-gg/quasar-svm"
+documentation = "https://docs.rs/quasar-svm"
+keywords = ["solana", "svm", "blockchain", "virtual-machine"]
+categories = ["development-tools", "emulators"]
+readme = "README.md"
 include = [
     "src/**/*",
+    "programs/**/*",
     "Cargo.toml",
     "README.md",
     "LICENSE"

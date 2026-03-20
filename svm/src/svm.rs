@@ -166,15 +166,15 @@ impl QuasarSvm {
 
         // Load programs based on config
         if config.token {
-            let elf = include_bytes!("../../programs/spl_token.so");
+            let elf = include_bytes!("../programs/spl_token.so");
             svm.add_program(&crate::SPL_TOKEN_PROGRAM_ID, &crate::loader_keys::LOADER_V2, elf);
         }
         if config.token_2022 {
-            let elf = include_bytes!("../../programs/spl_token_2022.so");
+            let elf = include_bytes!("../programs/spl_token_2022.so");
             svm.add_program(&crate::SPL_TOKEN_2022_PROGRAM_ID, &crate::loader_keys::LOADER_V3, elf);
         }
         if config.associated_token {
-            let elf = include_bytes!("../../programs/spl_associated_token.so");
+            let elf = include_bytes!("../programs/spl_associated_token.so");
             svm.add_program(&crate::SPL_ASSOCIATED_TOKEN_PROGRAM_ID, &crate::loader_keys::LOADER_V2, elf);
         }
 

@@ -101,19 +101,19 @@ impl QuasarSvm {
 
     /// Load the bundled SPL Token program.
     pub fn with_token_program(self) -> Self {
-        let elf = include_bytes!("../../programs/spl_token.so");
+        let elf = include_bytes!("../programs/spl_token.so");
         self.with_program_loader(&SPL_TOKEN_PROGRAM_ID, &loader_keys::LOADER_V2, elf)
     }
 
     /// Load the bundled SPL Token 2022 program.
     pub fn with_token_2022_program(self) -> Self {
-        let elf = include_bytes!("../../programs/spl_token_2022.so");
+        let elf = include_bytes!("../programs/spl_token_2022.so");
         self.with_program(&SPL_TOKEN_2022_PROGRAM_ID, elf)
     }
 
     /// Load the bundled SPL Associated Token program.
     pub fn with_associated_token_program(self) -> Self {
-        let elf = include_bytes!("../../programs/spl_associated_token.so");
+        let elf = include_bytes!("../programs/spl_associated_token.so");
         self.with_program_loader(
             &SPL_ASSOCIATED_TOKEN_PROGRAM_ID,
             &loader_keys::LOADER_V2,
