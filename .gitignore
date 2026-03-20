@@ -15,7 +15,13 @@ quasar_svm.dll
 package-lock.json
 
 # Python
-bindings/python/.pytest_cache
-bindings/python/.venv
-bindings/python/quasar_svm.egg-info
+bindings/python/build
+bindings/python/dist
+bindings/python/*/.pytest_cache
+bindings/python/*/.venv
+bindings/python/*.egg-info
 bindings/python/*/__pycache__
+
+# Node.js bindings (dev symlinks)
+bindings/node/libquasar_svm.*
+bindings/node/quasar_svm.dll
