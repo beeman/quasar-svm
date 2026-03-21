@@ -7,7 +7,9 @@ use agave_feature_set::FeatureSet;
 use agave_syscalls::{
     create_program_runtime_environment_v1, create_program_runtime_environment_v2,
 };
-use solana_account::{Account as SolanaAccount, AccountSharedData, ReadableAccount, WritableAccount};
+use solana_account::{
+    Account as SolanaAccount, AccountSharedData, ReadableAccount, WritableAccount,
+};
 use solana_compute_budget::compute_budget::ComputeBudget;
 use solana_hash::Hash;
 use solana_instruction::{AccountMeta, BorrowedAccountMeta, BorrowedInstruction, Instruction};
@@ -24,8 +26,8 @@ use solana_svm_timings::ExecuteTimings;
 use solana_svm_transaction::instruction::SVMInstruction;
 use solana_transaction_context::{IndexOfAccount, TransactionContext};
 
-use spl_token::state::{Account as SplTokenAccount, Mint as SplMint};
 use solana_program_pack::Pack;
+use spl_token::state::{Account as SplTokenAccount, Mint as SplMint};
 
 use crate::program_cache::ProgramCache;
 use crate::sysvars::Sysvars;
@@ -167,15 +169,27 @@ impl QuasarSvm {
         // Load programs based on config
         if config.token {
             let elf = include_bytes!("../programs/spl_token.so");
-            svm.add_program(&crate::SPL_TOKEN_PROGRAM_ID, &crate::loader_keys::LOADER_V2, elf);
+            svm.add_program(
+                &crate::SPL_TOKEN_PROGRAM_ID,
+                &crate::loader_keys::LOADER_V2,
+                elf,
+            );
         }
         if config.token_2022 {
             let elf = include_bytes!("../programs/spl_token_2022.so");
-            svm.add_program(&crate::SPL_TOKEN_2022_PROGRAM_ID, &crate::loader_keys::LOADER_V3, elf);
+            svm.add_program(
+                &crate::SPL_TOKEN_2022_PROGRAM_ID,
+                &crate::loader_keys::LOADER_V3,
+                elf,
+            );
         }
         if config.associated_token {
             let elf = include_bytes!("../programs/spl_associated_token.so");
-            svm.add_program(&crate::SPL_ASSOCIATED_TOKEN_PROGRAM_ID, &crate::loader_keys::LOADER_V2, elf);
+            svm.add_program(
+                &crate::SPL_ASSOCIATED_TOKEN_PROGRAM_ID,
+                &crate::loader_keys::LOADER_V2,
+                elf,
+            );
         }
 
         svm
@@ -234,8 +248,9 @@ impl QuasarSvm {
             .accounts
             .get_mut(address)
             .unwrap_or_else(|| panic!("set_token_balance: account {address} not found"));
-        let mut token = SplTokenAccount::unpack(&acct.data)
-            .unwrap_or_else(|_| panic!("set_token_balance: account {address} is not a valid token account"));
+        let mut token = SplTokenAccount::unpack(&acct.data).unwrap_or_else(|_| {
+            panic!("set_token_balance: account {address} is not a valid token account")
+        });
         token.amount = amount;
         SplTokenAccount::pack(token, &mut acct.data).unwrap();
     }
@@ -247,8 +262,9 @@ impl QuasarSvm {
             .accounts
             .get_mut(address)
             .unwrap_or_else(|| panic!("set_mint_supply: account {address} not found"));
-        let mut mint = SplMint::unpack(&acct.data)
-            .unwrap_or_else(|_| panic!("set_mint_supply: account {address} is not a valid mint account"));
+        let mut mint = SplMint::unpack(&acct.data).unwrap_or_else(|_| {
+            panic!("set_mint_supply: account {address} is not a valid mint account")
+        });
         mint.supply = supply;
         SplMint::pack(mint, &mut acct.data).unwrap();
     }
@@ -341,15 +357,15 @@ impl QuasarSvm {
         let logs = self.drain_logs();
 
         // Compute post-execution state
-        let post_balances: Vec<u64> = resulting_pairs.iter().map(|(_, acc)| acc.lamports()).collect();
+        let post_balances: Vec<u64> = resulting_pairs
+            .iter()
+            .map(|(_, acc)| acc.lamports())
+            .collect();
         let post_token_balances = Self::extract_token_balances(&resulting_pairs);
 
         // Extract execution trace from transaction context (using logs for accurate results)
-        let execution_trace = Self::extract_execution_trace(
-            &mut transaction_context,
-            &sanitized_message,
-            &logs,
-        );
+        let execution_trace =
+            Self::extract_execution_trace(&mut transaction_context, &sanitized_message, &logs);
 
         ExecutionResult {
             compute_units_consumed,
@@ -551,40 +567,42 @@ impl QuasarSvm {
                 }
 
                 // Try to parse as SPL token account
-                SplTokenAccount::unpack(account.data()).ok().map(|token_account| {
-                    let amount = token_account.amount.to_string();
+                SplTokenAccount::unpack(account.data())
+                    .ok()
+                    .map(|token_account| {
+                        let amount = token_account.amount.to_string();
 
-                    // Get decimals from mint (if we have it in the accounts list)
-                    let mint_pubkey = token_account.mint;
-                    let decimals = accounts
-                        .iter()
-                        .find(|(k, _)| *k == mint_pubkey)
-                        .and_then(|(_, acc)| {
-                            if acc.data().len() == SplMint::LEN {
-                                SplMint::unpack(acc.data()).ok().map(|m| m.decimals)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0);
+                        // Get decimals from mint (if we have it in the accounts list)
+                        let mint_pubkey = token_account.mint;
+                        let decimals = accounts
+                            .iter()
+                            .find(|(k, _)| *k == mint_pubkey)
+                            .and_then(|(_, acc)| {
+                                if acc.data().len() == SplMint::LEN {
+                                    SplMint::unpack(acc.data()).ok().map(|m| m.decimals)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(0);
 
-                    let ui_amount = if decimals > 0 {
-                        Some(token_account.amount as f64 / 10_f64.powi(decimals as i32))
-                    } else {
-                        Some(token_account.amount as f64)
-                    };
+                        let ui_amount = if decimals > 0 {
+                            Some(token_account.amount as f64 / 10_f64.powi(decimals as i32))
+                        } else {
+                            Some(token_account.amount as f64)
+                        };
 
-                    TokenBalance {
-                        account_index: index,
-                        mint: mint_pubkey.to_string(),
-                        owner: Some(token_account.owner.to_string()),
-                        ui_token_amount: UiTokenAmount {
-                            ui_amount,
-                            decimals,
-                            amount,
-                        },
-                    }
-                })
+                        TokenBalance {
+                            account_index: index,
+                            mint: mint_pubkey.to_string(),
+                            owner: Some(token_account.owner.to_string()),
+                            ui_token_amount: UiTokenAmount {
+                                ui_amount,
+                                decimals,
+                                amount,
+                            },
+                        }
+                    })
             })
             .collect()
     }
@@ -610,7 +628,8 @@ impl QuasarSvm {
             // Parse "Program <id> consumed <units> of <total> compute units"
             if let Some(units) = Self::parse_consumed_log(log) {
                 if let Some((depth, idx, _)) = stack.last() {
-                    results.entry((*depth, *idx))
+                    results
+                        .entry((*depth, *idx))
                         .and_modify(|e: &mut (u64, u64)| e.1 = units)
                         .or_insert((0, units));
                 }
@@ -620,7 +639,8 @@ impl QuasarSvm {
             // Parse "Program <id> success" or "Program <id> failed: <error>"
             if let Some(error_code) = Self::parse_result_log(log) {
                 if let Some((depth, idx, _)) = stack.pop() {
-                    results.entry((depth, idx))
+                    results
+                        .entry((depth, idx))
                         .and_modify(|e| e.0 = error_code)
                         .or_insert((error_code, 0));
                 }
@@ -707,7 +727,9 @@ impl QuasarSvm {
             .map(|(idx, frame)| {
                 let stack_depth = frame.nesting_level as u8;
                 let program_id_index = frame.program_account_index_in_tx as usize;
-                let program_id = *account_keys.get(program_id_index).unwrap_or(&Pubkey::default());
+                let program_id = *account_keys
+                    .get(program_id_index)
+                    .unwrap_or(&Pubkey::default());
 
                 // Get instruction data from our pre-collected vec
                 let instruction_data = instruction_data_vec.get(idx).cloned().unwrap_or_default();

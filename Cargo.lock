@@ -1571,11 +1571,8 @@ dependencies = [
 name = "quasar-svm-ffi"
 version = "0.1.0"
 dependencies = [
- "bs58",
  "cbindgen",
  "quasar-svm",
- "serde",
- "serde_json",
  "solana-account",
  "solana-clock",
  "solana-epoch-schedule",

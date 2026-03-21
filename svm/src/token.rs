@@ -1,7 +1,7 @@
+use solana_program_pack::Pack;
 use solana_pubkey::Pubkey;
 use solana_rent::Rent;
-use solana_program_pack::Pack;
-use spl_token::state::{Account as SplTokenAccount, Mint as SplMint, AccountState};
+use spl_token::state::{Account as SplTokenAccount, AccountState, Mint as SplMint};
 
 use crate::Account;
 
@@ -33,7 +33,11 @@ pub fn create_keyed_mint_account(address: &Pubkey, mint: &SplMint) -> Account {
 
 /// Create a pre-initialized mint account with a specific token program.
 #[inline(always)]
-pub fn create_keyed_mint_account_with_program(address: &Pubkey, mint: &SplMint, token_program_id: &Pubkey) -> Account {
+pub fn create_keyed_mint_account_with_program(
+    address: &Pubkey,
+    mint: &SplMint,
+    token_program_id: &Pubkey,
+) -> Account {
     let mut data = vec![0u8; SplMint::LEN];
     SplMint::pack(*mint, &mut data).unwrap();
     Account {
@@ -52,7 +56,11 @@ pub fn create_keyed_token_account(address: &Pubkey, token: &SplTokenAccount) -> 
 
 /// Create a pre-initialized token account with a specific token program.
 #[inline(always)]
-pub fn create_keyed_token_account_with_program(address: &Pubkey, token: &SplTokenAccount, token_program_id: &Pubkey) -> Account {
+pub fn create_keyed_token_account_with_program(
+    address: &Pubkey,
+    token: &SplTokenAccount,
+    token_program_id: &Pubkey,
+) -> Account {
     let mut data = vec![0u8; SplTokenAccount::LEN];
     SplTokenAccount::pack(*token, &mut data).unwrap();
     Account {
@@ -71,7 +79,12 @@ pub fn create_keyed_associated_token_account(
     mint: &Pubkey,
     amount: u64,
 ) -> Account {
-    create_keyed_associated_token_account_with_program(wallet, mint, amount, &crate::SPL_TOKEN_PROGRAM_ID)
+    create_keyed_associated_token_account_with_program(
+        wallet,
+        mint,
+        amount,
+        &crate::SPL_TOKEN_PROGRAM_ID,
+    )
 }
 
 /// Create a pre-initialized associated token account with a specific token program.
@@ -84,11 +97,7 @@ pub fn create_keyed_associated_token_account_with_program(
     token_program_id: &Pubkey,
 ) -> Account {
     let (ata, _bump) = Pubkey::find_program_address(
-        &[
-            wallet.as_ref(),
-            token_program_id.as_ref(),
-            mint.as_ref(),
-        ],
+        &[wallet.as_ref(), token_program_id.as_ref(), mint.as_ref()],
         &crate::SPL_ASSOCIATED_TOKEN_PROGRAM_ID,
     );
     let token = SplTokenAccount {

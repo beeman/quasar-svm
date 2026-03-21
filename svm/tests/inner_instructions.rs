@@ -1,6 +1,6 @@
 /// Test execution trace with CPI capture
-use quasar_svm::token::{create_keyed_mint_account, create_keyed_associated_token_account, Mint};
-use quasar_svm::{QuasarSvm, Account, Pubkey, SPL_TOKEN_PROGRAM_ID};
+use quasar_svm::token::{create_keyed_associated_token_account, create_keyed_mint_account, Mint};
+use quasar_svm::{Account, Pubkey, QuasarSvm, SPL_TOKEN_PROGRAM_ID};
 
 #[test]
 fn test_execution_trace_with_cpis() {
@@ -38,16 +38,14 @@ fn test_execution_trace_with_cpis() {
         &authority,
         &[],
         100,
-    ).unwrap();
+    )
+    .unwrap();
 
     println!("\n🧪 Testing Execution Trace with CPIs\n");
     println!("Executing SPL Token Transfer...");
 
     // Execute
-    let result = svm.process_instruction(
-        &transfer_ix,
-        &[authority_account, mint, alice, bob],
-    );
+    let result = svm.process_instruction(&transfer_ix, &[authority_account, mint, alice, bob]);
 
     println!("\n📊 Execution Result:");
     println!("  Success: {}", result.is_ok());
@@ -56,18 +54,20 @@ fn test_execution_trace_with_cpis() {
 
     // Show execution trace
     println!("\n📊 Execution Trace:");
-    println!("  Total executed instructions: {}", result.execution_trace.instructions.len());
+    println!(
+        "  Total executed instructions: {}",
+        result.execution_trace.instructions.len()
+    );
 
     for (idx, exec_instr) in result.execution_trace.instructions.iter().enumerate() {
         let indent = "  ".repeat(exec_instr.stack_depth as usize);
         let status = if exec_instr.result == 0 { "✅" } else { "❌" };
-        println!("  [{}] {}Depth={} {status} → {}",
-            idx,
-            indent,
-            exec_instr.stack_depth,
-            exec_instr.instruction.program_id
+        println!(
+            "  [{}] {}Depth={} {status} → {}",
+            idx, indent, exec_instr.stack_depth, exec_instr.instruction.program_id
         );
-        println!("       {}  CUs: {}, Accounts: {}, Data: {} bytes",
+        println!(
+            "       {}  CUs: {}, Accounts: {}, Data: {} bytes",
             indent,
             exec_instr.compute_units_consumed,
             exec_instr.instruction.accounts.len(),
@@ -76,7 +76,10 @@ fn test_execution_trace_with_cpis() {
     }
 
     // Show CPI analysis
-    let cpis: Vec<_> = result.execution_trace.instructions.iter()
+    let cpis: Vec<_> = result
+        .execution_trace
+        .instructions
+        .iter()
         .filter(|i| i.stack_depth > 0)
         .collect();
 
@@ -84,10 +87,9 @@ fn test_execution_trace_with_cpis() {
         println!("\n🔍 CPI Analysis:");
         println!("  Found {} CPI(s):", cpis.len());
         for cpi in &cpis {
-            println!("    Depth {}: {} ({} CUs)",
-                cpi.stack_depth,
-                cpi.instruction.program_id,
-                cpi.compute_units_consumed
+            println!(
+                "    Depth {}: {} ({} CUs)",
+                cpi.stack_depth, cpi.instruction.program_id, cpi.compute_units_consumed
             );
         }
     } else {
@@ -104,12 +106,18 @@ fn test_execution_trace_with_cpis() {
 
             // Show call stack by filtering instructions with depth <= current
             println!("\n  Call stack (parent callers):");
-            let mut stack_instructions: Vec<_> = result.execution_trace.instructions.iter()
+            let mut stack_instructions: Vec<_> = result
+                .execution_trace
+                .instructions
+                .iter()
                 .filter(|i| i.stack_depth <= last.stack_depth)
                 .collect();
             stack_instructions.reverse();
             for instr in stack_instructions.iter().take(5) {
-                println!("    Depth {} → {}", instr.stack_depth, instr.instruction.program_id);
+                println!(
+                    "    Depth {} → {}",
+                    instr.stack_depth, instr.instruction.program_id
+                );
             }
         }
     }
@@ -122,6 +130,12 @@ fn test_execution_trace_with_cpis() {
     assert!(result.is_ok(), "Transfer should succeed");
 
     // Verify execution trace structure
-    assert!(!result.execution_trace.instructions.is_empty(), "Should have at least one instruction");
-    assert_eq!(result.execution_trace.instructions[0].stack_depth, 0, "First instruction should be at depth 0");
+    assert!(
+        !result.execution_trace.instructions.is_empty(),
+        "Should have at least one instruction"
+    );
+    assert_eq!(
+        result.execution_trace.instructions[0].stack_depth, 0,
+        "First instruction should be at depth 0"
+    );
 }

@@ -1,6 +1,6 @@
 {
   "name": "@blueshift-gg/quasar-svm",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Node.js bindings for quasar-svm (Solana SVM execution engine)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

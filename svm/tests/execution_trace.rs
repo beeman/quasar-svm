@@ -1,6 +1,6 @@
 /// Test execution trace for debugging and error analysis
 use quasar_svm::token::{create_keyed_mint_account, Mint};
-use quasar_svm::{QuasarSvm, Account, Pubkey, SPL_TOKEN_PROGRAM_ID};
+use quasar_svm::{Account, Pubkey, QuasarSvm, SPL_TOKEN_PROGRAM_ID};
 
 #[test]
 fn test_execution_trace_simple_transfer() {
@@ -26,16 +26,9 @@ fn test_execution_trace_simple_transfer() {
         },
     );
 
-    let alice = quasar_svm::token::create_keyed_associated_token_account(
-        &authority,
-        &mint_addr,
-        500_000,
-    );
-    let bob = quasar_svm::token::create_keyed_associated_token_account(
-        &authority,
-        &mint_addr,
-        0,
-    );
+    let alice =
+        quasar_svm::token::create_keyed_associated_token_account(&authority, &mint_addr, 500_000);
+    let bob = quasar_svm::token::create_keyed_associated_token_account(&authority, &mint_addr, 0);
 
     let transfer_ix = spl_token::instruction::transfer(
         &SPL_TOKEN_PROGRAM_ID,
@@ -44,14 +37,12 @@ fn test_execution_trace_simple_transfer() {
         &authority,
         &[],
         100,
-    ).unwrap();
+    )
+    .unwrap();
 
     println!("\n🧪 Testing Execution Trace (Simple Transfer)\n");
 
-    let result = svm.process_instruction(
-        &transfer_ix,
-        &[authority_account, mint, alice, bob],
-    );
+    let result = svm.process_instruction(&transfer_ix, &[authority_account, mint, alice, bob]);
 
     println!("📊 Execution Result:");
     println!("  Success: {}", result.is_ok());
@@ -59,23 +50,40 @@ fn test_execution_trace_simple_transfer() {
 
     // Show execution trace
     println!("\n📊 Execution Trace:");
-    println!("  Total executed instructions: {}", result.execution_trace.instructions.len());
+    println!(
+        "  Total executed instructions: {}",
+        result.execution_trace.instructions.len()
+    );
     for (idx, exec_instr) in result.execution_trace.instructions.iter().enumerate() {
         let indent = "  ".repeat(exec_instr.stack_depth as usize);
         let status = if exec_instr.result == 0 { "✅" } else { "❌" };
-        println!("  [{}] {}Depth={} {status} → {}",
-            idx,
-            indent,
-            exec_instr.stack_depth,
-            exec_instr.instruction.program_id
+        println!(
+            "  [{}] {}Depth={} {status} → {}",
+            idx, indent, exec_instr.stack_depth, exec_instr.instruction.program_id
         );
-        println!("       {}  CUs: {}", indent, exec_instr.compute_units_consumed);
+        println!(
+            "       {}  CUs: {}",
+            indent, exec_instr.compute_units_consumed
+        );
     }
 
     println!("\n📈 Analysis:");
-    println!("  Total instructions: {}", result.execution_trace.instructions.len());
-    let top_level: Vec<_> = result.execution_trace.instructions.iter().filter(|i| i.stack_depth == 0).collect();
-    let cpis: Vec<_> = result.execution_trace.instructions.iter().filter(|i| i.stack_depth == 1).collect();
+    println!(
+        "  Total instructions: {}",
+        result.execution_trace.instructions.len()
+    );
+    let top_level: Vec<_> = result
+        .execution_trace
+        .instructions
+        .iter()
+        .filter(|i| i.stack_depth == 0)
+        .collect();
+    let cpis: Vec<_> = result
+        .execution_trace
+        .instructions
+        .iter()
+        .filter(|i| i.stack_depth == 1)
+        .collect();
     println!("  Top-level only: {}", top_level.len());
     println!("  CPIs: {}", cpis.len());
     if cpis.is_empty() {
@@ -112,33 +120,27 @@ fn test_execution_trace_on_error() {
     );
 
     let alice = quasar_svm::token::create_keyed_associated_token_account(
-        &authority,  // Owned by correct authority
-        &mint_addr,
-        500_000,
+        &authority, // Owned by correct authority
+        &mint_addr, 500_000,
     );
-    let bob = quasar_svm::token::create_keyed_associated_token_account(
-        &authority,
-        &mint_addr,
-        0,
-    );
+    let bob = quasar_svm::token::create_keyed_associated_token_account(&authority, &mint_addr, 0);
 
     // Try to transfer with WRONG authority (should fail)
     let transfer_ix = spl_token::instruction::transfer(
         &SPL_TOKEN_PROGRAM_ID,
         &alice.address,
         &bob.address,
-        &wrong_authority,  // Wrong signer!
+        &wrong_authority, // Wrong signer!
         &[],
         100,
-    ).unwrap();
+    )
+    .unwrap();
 
     println!("\n🧪 Testing Execution Trace on Error\n");
     println!("Attempting transfer with wrong authority (should fail)...");
 
-    let result = svm.process_instruction(
-        &transfer_ix,
-        &[wrong_authority_account, mint, alice, bob],
-    );
+    let result =
+        svm.process_instruction(&transfer_ix, &[wrong_authority_account, mint, alice, bob]);
 
     println!("\n📊 Execution Result:");
     println!("  Success: {}", result.is_ok());
@@ -149,7 +151,10 @@ fn test_execution_trace_on_error() {
     if result.execution_trace.instructions.is_empty() {
         println!("  No execution trace available");
     } else {
-        println!("  Total executed instructions: {}", result.execution_trace.instructions.len());
+        println!(
+            "  Total executed instructions: {}",
+            result.execution_trace.instructions.len()
+        );
         for (idx, exec_instr) in result.execution_trace.instructions.iter().enumerate() {
             let indent = "  ".repeat(exec_instr.stack_depth as usize);
             let status = if exec_instr.result == 0 {
@@ -157,11 +162,9 @@ fn test_execution_trace_on_error() {
             } else {
                 format!("❌({})", exec_instr.result)
             };
-            println!("  [{}] {}Depth={} {status} → {}",
-                idx,
-                indent,
-                exec_instr.stack_depth,
-                exec_instr.instruction.program_id
+            println!(
+                "  [{}] {}Depth={} {status} → {}",
+                idx, indent, exec_instr.stack_depth, exec_instr.instruction.program_id
             );
         }
 
@@ -180,11 +183,23 @@ fn test_execution_trace_on_error() {
         println!("\n🔍 Error Debugging Information:");
 
         if let Some(failure_instr) = result.execution_trace.instructions.last() {
-            println!("  Stack depth: {} (depth in CPI stack)", failure_instr.stack_depth);
-            println!("  Program that failed: {}", failure_instr.instruction.program_id);
+            println!(
+                "  Stack depth: {} (depth in CPI stack)",
+                failure_instr.stack_depth
+            );
+            println!(
+                "  Program that failed: {}",
+                failure_instr.instruction.program_id
+            );
             println!("  Result code: {}", failure_instr.result);
-            println!("  Accounts in instruction: {}", failure_instr.instruction.accounts.len());
-            println!("  Instruction data length: {} bytes", failure_instr.instruction.data.len());
+            println!(
+                "  Accounts in instruction: {}",
+                failure_instr.instruction.accounts.len()
+            );
+            println!(
+                "  Instruction data length: {} bytes",
+                failure_instr.instruction.data.len()
+            );
         }
 
         let call_stack: Vec<_> = result.execution_trace.instructions.iter().collect();
@@ -196,11 +211,9 @@ fn test_execution_trace_on_error() {
             } else {
                 format!("❌({})", instr.result)
             };
-            println!("    {}[{}] Depth={} {status} {}",
-                indent,
-                idx,
-                instr.stack_depth,
-                instr.instruction.program_id
+            println!(
+                "    {}[{}] Depth={} {status} {}",
+                indent, idx, instr.stack_depth, instr.instruction.program_id
             );
         }
     }
