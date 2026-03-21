@@ -1,6 +1,6 @@
 # QuasarSVM - kit Layer
 
-QuasarSVM kit layer provides Solana virtual machine execution with full interoperability with `@solana/kit`. This layer uses `Address` (branded string) from `@solana/addresses` and `Account<T>` from `@solana/accounts` for account representation.
+QuasarSVM kit layer provides Solana virtual machine execution with full interoperability with Solana's modular packages. This layer uses `Address` (branded string) from `@solana/addresses` and `Account<T>` from `@solana/accounts` for account representation.
 
 ## Installation
 
@@ -14,10 +14,9 @@ npm install @blueshift-gg/quasar-svm
 import {
   QuasarSvm,
   createKeyedMintAccount, createKeyedAssociatedTokenAccount,
-  tokenTransfer,
 } from "@blueshift-gg/quasar-svm/kit";
 import { generateKeyPair, getAddressFromPublicKey } from "@solana/keys";
-import { getTokenDecoder } from "@solana-program/token";
+import { getTokenDecoder, getTransferInstruction } from "@solana-program/token";
 
 const vm = new QuasarSvm(); // SPL programs loaded by default
 
@@ -32,7 +31,12 @@ const bob   = await createKeyedAssociatedTokenAccount(
   mint.address, 0n,
 );
 
-const ix = tokenTransfer(alice.address, bob.address, authority, 1_000n);
+const ix = getTransferInstruction({
+  source: alice.address,
+  destination: bob.address,
+  authority,
+  amount: 1_000n,
+});
 
 const result = vm.processInstruction(ix, [mint, alice, bob]);
 
@@ -357,33 +361,47 @@ enum AccountState {
 }
 ```
 
-## Token Instruction Builders
+## Token Instructions
 
-All builders accept an optional `tokenProgramId` parameter (defaults to SPL Token). Pass `TOKEN_2022_PROGRAM_ID` for Token-2022.
+Use instruction builders from `@solana-program/token`:
 
 ### Transfer
 
 ```ts
-import { tokenTransfer } from "@blueshift-gg/quasar-svm/kit";
+import { getTransferInstruction } from "@solana-program/token";
 
-const ix = tokenTransfer(source, destination, authority, 1_000n);
-const ix = tokenTransfer(source, destination, authority, 1_000n, TOKEN_2022_PROGRAM_ID);
+const ix = getTransferInstruction({
+  source,
+  destination,
+  authority,
+  amount: 1_000n,
+});
 ```
 
 ### MintTo
 
 ```ts
-import { tokenMintTo } from "@blueshift-gg/quasar-svm/kit";
+import { getMintToInstruction } from "@solana-program/token";
 
-const ix = tokenMintTo(mint, destination, mintAuthority, 5_000n);
+const ix = getMintToInstruction({
+  mint,
+  token: destination,
+  mintAuthority,
+  amount: 5_000n,
+});
 ```
 
 ### Burn
 
 ```ts
-import { tokenBurn } from "@blueshift-gg/quasar-svm/kit";
+import { getBurnInstruction } from "@solana-program/token";
 
-const ix = tokenBurn(source, mint, authority, 500n);
+const ix = getBurnInstruction({
+  account: source,
+  mint,
+  owner: authority,
+  amount: 500n,
+});
 ```
 
 ## Result Token Helpers
@@ -435,10 +453,9 @@ const ata   = await createKeyedAssociatedTokenAccount(owner, mint, 5_000n, TOKEN
 import {
   QuasarSvm,
   createKeyedMintAccount, createKeyedAssociatedTokenAccount,
-  tokenTransfer,
 } from "@blueshift-gg/quasar-svm/kit";
 import { generateKeyPair, getAddressFromPublicKey } from "@solana/keys";
-import { getTokenDecoder } from "@solana-program/token";
+import { getTokenDecoder, getTransferInstruction } from "@solana-program/token";
 
 const vm = new QuasarSvm(); // SPL programs loaded by default
 
@@ -451,7 +468,12 @@ const mint  = createKeyedMintAccount(mintAddr, { decimals: 6, supply: 10_000n })
 const alice = await createKeyedAssociatedTokenAccount(authority, mint.address, 5_000n);
 const bob   = await createKeyedAssociatedTokenAccount(recipient, mint.address, 0n);
 
-const ix = tokenTransfer(alice.address, bob.address, authority, 1_000n);
+const ix = getTransferInstruction({
+  source: alice.address,
+  destination: bob.address,
+  authority,
+  amount: 1_000n,
+});
 
 const result = vm.processInstruction(ix, [mint, alice, bob]);
 
@@ -474,9 +496,9 @@ The kit layer differs from the web3.js layer in the following ways:
 
 Both layers expose the same functionality with different type systems to match their respective ecosystems.
 
-## Integration with @solana/kit
+## Integration with Solana Modular Packages
 
-The kit layer is designed for seamless integration with the `@solana/kit` ecosystem:
+The kit layer is designed for seamless integration with Solana's modular package ecosystem:
 
 - Uses `Address` branded strings from `@solana/addresses`
 - Uses `Account<T>` from `@solana/accounts`
@@ -484,7 +506,7 @@ The kit layer is designed for seamless integration with the `@solana/kit` ecosys
 - Uses `Lamports` from `@solana/rpc-types`
 - Compatible with `@solana/codecs-core` decoders
 
-This ensures type safety and consistency when working with other Solana kit packages.
+This ensures type safety and consistency when working with other Solana modular packages.
 
 ## Async PDA Derivation
 
@@ -514,11 +536,6 @@ This is because `@solana/addresses` uses async PDA derivation for compatibility 
 - `createKeyedMintAccount(address, opts, tokenProgramId?)`
 - `createKeyedTokenAccount(address, opts, tokenProgramId?)`
 - `createKeyedAssociatedTokenAccount(owner, mint, amount, tokenProgramId?)` (async)
-
-### Instruction Builders
-- `tokenTransfer(source, destination, authority, amount, tokenProgramId?)`
-- `tokenMintTo(mint, destination, authority, amount, tokenProgramId?)`
-- `tokenBurn(source, mint, authority, amount, tokenProgramId?)`
 
 ### Types
 - `Account<T>` (re-exported from `@solana/accounts`)
